@@ -4,6 +4,55 @@
   <meta charset="utf-8" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.2/p5.min.js"></script>
   <script src="sketch.js"></script>
+  <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css"/>
+  <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/select/1.7.0/css/select.dataTables.min.css"/>
+  <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
+  <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js"></script>
+  <script src="https://cdn.datatables.net/select/1.7.0/js/dataTables.select.min.js"></script>
+  <style>
+    #container {
+      display: flex;
+      align-items: flex-start;
+    }
+    #scatterplot-holder {
+      width: 700px;
+      min-width: 700px;
+      height: 800px;
+      position: relative;
+    }
+    #data-table-holder {
+      flex: 1;
+      padding-left: 100px;
+    }
+    #data-table th:nth-child(4),
+    #data-table td:nth-child(4) {
+      min-width: 600px;
+      max-width: 600px;
+      white-space: pre-line;
+    }
+    canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    /* Override DataTables Select extension row color */
+    #data-table.dataTable tbody tr.selected,
+    #data-table.dataTable.display tbody tr.selected,
+    div.dataTables_scrollBody table#data-table.dataTable tbody tr.selected {
+      background: #ffe066 !important;
+      background-color: #ffe066 !important;
+    }
+  </style>
 </head>
-<body></body>
+<body>
+  <div id="container">
+    <div id="scatterplot-holder"></div>
+    <div id="data-table-holder">
+      <table id="data-table" class="display" style="width:100%"></table>
+    </div>
+  </div>
+</body>
 </html>
