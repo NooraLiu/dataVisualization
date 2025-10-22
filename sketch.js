@@ -9,21 +9,27 @@ let allDimNames = [];
 let scatterplotX = 100; // Left margin for scatterplot
 let scatterplotY = 100; // Top margin for scatterplot
 let scatterplotSize = 600; // Square size for scatterplot
+let ROW_HEIGHT = 150; // Global variable for row height
 
 function preload() {
   table = loadTable('data.csv', 'csv', 'header');
 }
 
 function setup() {
-  createCanvas(800, 1000);
+  let cnv = createCanvas(800, 1000);
+  cnv.parent('scatterplot-holder'); // Attach canvas to a container div
+  cnv.style('position', 'fixed');   // Fix the canvas position
+  cnv.style('top', '0px');          // Lock it to the top
+  cnv.style('left', '0px');         // Lock it to the left
+  cnv.style('z-index', '1000');     // Ensure it stays above other elements
   noStroke();
   textAlign(LEFT, TOP);
   textSize(12);
 
-  // detect all dimensions
+  // Detect all dimensions
   allDimNames = table.columns.filter(c => c.startsWith('d'));
 
-  // extract points
+  // Extract points
   for (let r = 0; r < table.getRowCount(); r++) {
     let id = table.getString(r, 'id');
     let url = table.getString(r, 'url');
@@ -33,11 +39,19 @@ function setup() {
     points.push({ id, url, title, text, dims });
   }
 
-  // scatterplot dimension selectors
+  // Scatterplot dimension selectors
   xDimSelect = createSelect();
   yDimSelect = createSelect();
-  xDimSelect.position(scatterplotX, 20);
-  yDimSelect.position(scatterplotX + 160, 20);
+
+  // Position dropdowns and make them fixed
+  xDimSelect.position(120, 20); // Adjusted for visibility
+  yDimSelect.position(280, 20); // Adjusted for visibility
+  xDimSelect.style('position', 'fixed'); // Fix the dropdown position
+  yDimSelect.style('position', 'fixed');
+  xDimSelect.style('z-index', '1001');   // Ensure dropdowns appear above the canvas
+  yDimSelect.style('z-index', '1001');
+
+  // Populate dropdowns with dimension names
   for (let name of allDimNames) {
     xDimSelect.option(name);
     yDimSelect.option(name);
@@ -48,6 +62,8 @@ function setup() {
   // Initial population of DataTable
   populateDataTable();
 }
+
+let lastHoveredId = null; // Track the last hovered ID
 
 function draw() {
   background(250);
@@ -62,13 +78,17 @@ function draw() {
   detectHover(xIndex, yIndex);
 
   // Highlight the row that matches the hovered point's id
-  let dt = $('#data-table').DataTable();
-  dt.rows().deselect(); // Remove previous selection
   if (hoverIndex !== -1) {
     let hoveredId = points[hoverIndex].id;
-    dt.rows(function(idx, data, node) {
-      return String(data[0]) === String(hoveredId);
-    }).select();
+
+    // Only call locateRowById if the hovered ID has changed
+    if (hoveredId !== lastHoveredId) {
+      console.log(`Hovered ID: ${hoveredId}`);
+      locateRowById(hoveredId);
+      lastHoveredId = hoveredId; // Update the last hovered ID
+    }
+  } else {
+    lastHoveredId = null; // Reset when no point is hovered
   }
 
   drawScatterplot(xIndex, yIndex);
@@ -212,9 +232,13 @@ function populateDataTable() {
     $('#data-table').DataTable().destroy();
   }
 
-  // Initialize DataTables with horizontal scroll and column visibility
+  // Initialize DataTables with Scroller enabled
   $('#data-table').DataTable({
     scrollX: true,
+    scrollY: '700px', // Set the height of the scrollable area
+    scroller: {
+      rowHeight: ROW_HEIGHT // Use the global variable for row height
+    },
     select: {
       style: 'single'
     },
@@ -227,6 +251,41 @@ function populateDataTable() {
       }))
     ],
     dom: 'Bfrtip',
-    buttons: ['colvis']
+    buttons: ['colvis'],
+    createdRow: function(row, data, dataIndex) {
+      // Apply a fixed height to each row using the global variable
+      $(row).css('height', `${ROW_HEIGHT}px`);
+    }
   });
+}
+
+// --- Locate row by ID ---
+function locateRowById(hoveredId) {
+  let dt = $('#data-table').DataTable();
+
+  // Locate the row by its id
+  let row = dt.row(function(idx, data, node) {
+    return String(data[0]) === String(hoveredId); // Match the id column
+  });
+
+  if (row.any()) {
+    // Highlight the row
+    row.select();
+
+    // Get the row's position in the current view (after sorting/filtering)
+    let rowIndexInView = dt.rows({ order: 'applied' }).indexes().toArray().indexOf(row.index());
+    console.log(`Row Index in Current View: ${rowIndexInView}`);
+
+    // Use DataTables Scroller API to scroll to the row
+    if ($.fn.DataTable.isDataTable('#data-table') && dt.scroller) {
+      // Scroll to the row and align it to the top
+      dt.scroller().scrollToRow(rowIndexInView, true, function() {
+        console.log(`Scrolled to row with ID ${hoveredId} and aligned it to the top.`);
+      });
+    } else {
+      console.log('Scroller extension is not enabled. Cannot scroll to the row.');
+    }
+  } else {
+    console.log(`Row with ID ${hoveredId} not found.`);
+  }
 }

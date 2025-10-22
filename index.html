@@ -7,31 +7,53 @@
   <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css"/>
   <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css"/>
   <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/select/1.7.0/css/select.dataTables.min.css"/>
+  <link rel="stylesheet" href="https://cdn.datatables.net/scroller/2.0.7/css/scroller.dataTables.min.css">
   <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
   <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
   <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
   <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js"></script>
   <script src="https://cdn.datatables.net/select/1.7.0/js/dataTables.select.min.js"></script>
+  <script src="https://cdn.datatables.net/scroller/2.0.7/js/dataTables.scroller.min.js"></script>
   <style>
     #container {
       display: flex;
       align-items: flex-start;
     }
+    /* Fixed scatterplot canvas */
     #scatterplot-holder {
-      width: 700px;
-      min-width: 700px;
-      height: 800px;
-      position: relative;
+      width: 800px;   /* Match canvas width */
+      height: 1000px; /* Match canvas height */
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 1000; /* Ensure it stays above other elements */
+      pointer-events: none; /* Prevent blocking interactions with other elements */
     }
     #data-table-holder {
-      flex: 1;
-      padding-left: 100px;
+      margin-left: 820px; /* Adjust to leave space for the scatterplot */
+      padding: 20px;
     }
+    /* Set a fixed height for all rows */
+    #data-table tbody tr {
+      height: 150px; /* Fixed height for rows */
+    }
+
+    /* Clip overflowing text in table cells */
+    #data-table tbody td {
+      overflow: hidden;        /* Hide overflowing content */
+      text-overflow: ellipsis; /* Show ellipsis for truncated text */
+      white-space: nowrap;     /* Prevent text wrapping */
+    }
+    /* Allow text wrapping only in the "text" column */
     #data-table th:nth-child(4),
     #data-table td:nth-child(4) {
       min-width: 600px;
       max-width: 600px;
-      white-space: pre-line;
+      white-space: pre;     /* Allow text to wrap */
+      overflow: hidden;        /* Hide overflowing content */
+      text-overflow: ellipsis; /* Show ellipsis for truncated text */
+      word-wrap: break-word;   /* Break long words if necessary */
+      max-height: 200px;       /* Ensure the content does not exceed the row height */
     }
     canvas {
       position: absolute;
@@ -48,11 +70,9 @@
   </style>
 </head>
 <body>
-  <div id="container">
-    <div id="scatterplot-holder"></div>
-    <div id="data-table-holder">
-      <table id="data-table" class="display" style="width:100%"></table>
-    </div>
+  <div id="scatterplot-holder"></div> <!-- Container for the fixed canvas -->
+  <div id="data-table-holder">
+    <table id="data-table" class="display" style="width:100%"></table>
   </div>
 </body>
 </html>
