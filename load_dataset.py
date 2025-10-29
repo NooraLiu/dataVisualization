@@ -5,7 +5,7 @@ import pandas as pd
 dataset = load_dataset("lsb/enwiki20230101-bysize-minilml6v2-avgembeddings", split="train")
 
 # If the dataset is huge, take a sample
-subset = dataset.select(range(100))  # first 100 rows
+subset = dataset.select(range(500))  # first 5000 rows
 
 # Flatten the embeddings: turn avg_embed array into columns d1...dn
 def flatten_row(row):
@@ -25,4 +25,4 @@ df = pd.DataFrame(flattened)
 # Save as CSV for p5.js
 df.to_csv("wiki_embeddings.csv", index=False)
 
-print("Saved 100 rows to wiki_embeddings.csv")
+print("Saved 5000 rows to wiki_embeddings.csv")
