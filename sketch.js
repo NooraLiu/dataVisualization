@@ -10,6 +10,7 @@ let scatterplotX = 100; // Left margin for scatterplot
 let scatterplotY = 100; // Top margin for scatterplot
 let scatterplotSize = 600; // Square size for scatterplot
 let ROW_HEIGHT = 150; // Global variable for row height
+let POINT_SIZE = 5; // Default point size
 
 function preload() {
   table = loadTable('data.csv', 'csv', 'header');
@@ -64,6 +65,7 @@ function setup() {
 }
 
 let lastHoveredId = null; // Track the last hovered ID
+let tableHoverId = null; // Track which row is hovered in the table
 
 function draw() {
   background(250);
@@ -173,8 +175,44 @@ function drawScatterplot(xIndex, yIndex) {
     let x = map(p.dims[xIndex], minX, maxX, scatterplotX, scatterplotX + scatterplotSize);
     let y = map(p.dims[yIndex], minY, maxY, scatterplotY + scatterplotSize, scatterplotY);
 
-    fill(hoverIndex === i ? 'orange' : 'steelblue');
-    ellipse(x, y, 10, 10);
+    // Determine point color and highlight based on hover state
+    let pointColor;
+    let showHighlight = false;
+    let highlightColor;
+    let highlightSize;
+    let highlightStrokeWeight;
+
+    if (hoverIndex === i) {
+      // Scatterplot hover
+      pointColor = 'orange';
+      showHighlight = true;
+      highlightColor = color(255, 165, 0); // Orange
+      highlightSize = POINT_SIZE + 10;
+      highlightStrokeWeight = 2;
+    } else if (tableHoverId && String(p.id) === tableHoverId) {
+      // Table row hover
+      pointColor = 'orange';
+      showHighlight = true;
+      highlightColor = color(255, 165, 0); // Orange
+      highlightSize = POINT_SIZE + 15;
+      highlightStrokeWeight = 3;
+    } else {
+      // Default
+      pointColor = 'steelblue';
+    }
+
+    // Draw highlight circle if needed
+    if (showHighlight) {
+      noFill();
+      stroke(highlightColor);
+      strokeWeight(highlightStrokeWeight);
+      ellipse(x, y, highlightSize, highlightSize);
+    }
+
+    // Draw the actual point with the determined color
+    noStroke();
+    fill(pointColor);
+    ellipse(x, y, POINT_SIZE, POINT_SIZE);
   }
 
   // --- Hover box logic (reset strokeWeight and stroke) ---
@@ -235,26 +273,33 @@ function populateDataTable() {
   // Initialize DataTables with Scroller enabled
   $('#data-table').DataTable({
     scrollX: true,
-    scrollY: '700px', // Set the height of the scrollable area
+    scrollY: '700px',
     scroller: {
-      rowHeight: ROW_HEIGHT // Use the global variable for row height
+      rowHeight: ROW_HEIGHT
     },
     select: {
       style: 'single'
     },
     columnDefs: [
       { width: "600px", targets: 3 },
-      // Hide dimension columns except the first 3
       ...allDimNames.slice(3).map((_, i) => ({
         visible: false,
-        targets: i + 4 // 0-based index: id, title, url, text, then dims
+        targets: i + 4
       }))
     ],
     dom: 'Bfrtip',
     buttons: ['colvis'],
     createdRow: function(row, data, dataIndex) {
-      // Apply a fixed height to each row using the global variable
       $(row).css('height', `${ROW_HEIGHT}px`);
+      
+      // Add hover event listeners to each row
+      $(row).on('mouseenter', function() {
+        tableHoverId = String(data[0]); // Set the hovered ID (first column is ID)
+      });
+      
+      $(row).on('mouseleave', function() {
+        tableHoverId = null; // Clear the hovered ID
+      });
     }
   });
 }
