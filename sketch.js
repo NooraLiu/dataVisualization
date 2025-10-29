@@ -4,13 +4,24 @@ let hoverIndex = -1;
 let hoverCol = ''; // 'url' or 'text' when hovering
 
 // UI elements
-let xDimSelect, yDimSelect;
+let xDimSelect, yDimSelect, hotspotSlider;
 let allDimNames = [];
 let scatterplotX = 100; // Left margin for scatterplot
 let scatterplotY = 100; // Top margin for scatterplot
 let scatterplotSize = 600; // Square size for scatterplot
 let ROW_HEIGHT = 150; // Global variable for row height
 let POINT_SIZE = 5; // Default point size
+
+// Hotspot and zoom variables
+let hotspots = [];
+let isZoomed = false;
+let zoomedHotspot = null;
+let originalXRange = { min: 0, max: 1 };
+let originalYRange = { min: 0, max: 1 };
+let zoomedXRange = { min: 0, max: 1 };
+let zoomedYRange = { min: 0, max: 1 };
+let HOTSPOT_THRESHOLD = 40; // Will be controlled by slider
+let MIN_CLUSTER_SIZE = 10; // Minimum number of points to form a hotspot (increased from 3)
 
 function preload() {
   table = loadTable('data.csv', 'csv', 'header');
@@ -52,6 +63,13 @@ function setup() {
   xDimSelect.style('z-index', '1001');   // Ensure dropdowns appear above the canvas
   yDimSelect.style('z-index', '1001');
 
+  // Create hotspot threshold slider
+  hotspotSlider = createSlider(20, 80, 40, 5); // min: 20, max: 80, default: 40, step: 5
+  hotspotSlider.position(440, 20);
+  hotspotSlider.style('position', 'fixed');
+  hotspotSlider.style('z-index', '1001');
+  hotspotSlider.style('width', '150px');
+
   // Populate dropdowns with dimension names
   for (let name of allDimNames) {
     xDimSelect.option(name);
@@ -77,6 +95,15 @@ function draw() {
   let xIndex = allDimNames.indexOf(xName);
   let yIndex = allDimNames.indexOf(yName);
 
+  // Update HOTSPOT_THRESHOLD from slider
+  HOTSPOT_THRESHOLD = hotspotSlider.value();
+
+  // Update data ranges and hotspots when not zoomed
+  if (!isZoomed) {
+    updateDataRanges(xIndex, yIndex);
+    detectHotspots(xIndex, yIndex);
+  }
+
   detectHover(xIndex, yIndex);
 
   // Highlight the row that matches the hovered point's id
@@ -94,6 +121,7 @@ function draw() {
   }
 
   drawScatterplot(xIndex, yIndex);
+  drawSliderLabel();
 }
 
 function detectHover(xIndex, yIndex) {
@@ -101,13 +129,23 @@ function detectHover(xIndex, yIndex) {
 
   let xVals = points.map(p => p.dims[xIndex]);
   let yVals = points.map(p => p.dims[yIndex]);
-  let minX = min(xVals), maxX = max(xVals);
-  let minY = min(yVals), maxY = max(yVals);
+  
+  let currentXRange = isZoomed ? zoomedXRange : originalXRange;
+  let currentYRange = isZoomed ? zoomedYRange : originalYRange;
 
   for (let i = 0; i < points.length; i++) {
     let p = points[i];
-    let x = map(p.dims[xIndex], minX, maxX, scatterplotX, scatterplotX + scatterplotSize);
-    let y = map(p.dims[yIndex], minY, maxY, scatterplotY + scatterplotSize, scatterplotY); // Invert y-axis
+    
+    // Skip points outside current zoom range
+    if (isZoomed) {
+      if (p.dims[xIndex] < currentXRange.min || p.dims[xIndex] > currentXRange.max ||
+          p.dims[yIndex] < currentYRange.min || p.dims[yIndex] > currentYRange.max) {
+        continue;
+      }
+    }
+    
+    let x = map(p.dims[xIndex], currentXRange.min, currentXRange.max, scatterplotX, scatterplotX + scatterplotSize);
+    let y = map(p.dims[yIndex], currentYRange.min, currentYRange.max, scatterplotY + scatterplotSize, scatterplotY);
 
     if (dist(mouseX, mouseY, x, y) < 6) {
       hoverIndex = i;
@@ -116,16 +154,72 @@ function detectHover(xIndex, yIndex) {
   }
 }
 
+function updateDataRanges(xIndex, yIndex) {
+  let xVals = points.map(p => p.dims[xIndex]);
+  let yVals = points.map(p => p.dims[yIndex]);
+  
+  originalXRange.min = min(xVals);
+  originalXRange.max = max(xVals);
+  originalYRange.min = min(yVals);
+  originalYRange.max = max(yVals);
+}
+
+function detectHotspots(xIndex, yIndex) {
+  hotspots = [];
+  let clusteredPoints = new Set();
+  
+  for (let i = 0; i < points.length; i++) {
+    if (clusteredPoints.has(i)) continue;
+    
+    let cluster = [i];
+    let centerX = map(points[i].dims[xIndex], originalXRange.min, originalXRange.max, scatterplotX, scatterplotX + scatterplotSize);
+    let centerY = map(points[i].dims[yIndex], originalYRange.min, originalYRange.max, scatterplotY + scatterplotSize, scatterplotY);
+    
+    // Find nearby points
+    for (let j = i + 1; j < points.length; j++) {
+      if (clusteredPoints.has(j)) continue;
+      
+      let x = map(points[j].dims[xIndex], originalXRange.min, originalXRange.max, scatterplotX, scatterplotX + scatterplotSize);
+      let y = map(points[j].dims[yIndex], originalYRange.min, originalYRange.max, scatterplotY + scatterplotSize, scatterplotY);
+      
+      if (dist(centerX, centerY, x, y) < HOTSPOT_THRESHOLD) {
+        cluster.push(j);
+        clusteredPoints.add(j);
+      }
+    }
+    
+    // Create hotspot if cluster is large enough
+    if (cluster.length >= MIN_CLUSTER_SIZE) {
+      clusteredPoints.add(i);
+      
+      // Calculate hotspot bounds
+      let clusterXVals = cluster.map(idx => points[idx].dims[xIndex]);
+      let clusterYVals = cluster.map(idx => points[idx].dims[yIndex]);
+      
+      let hotspot = {
+        centerX: centerX,
+        centerY: centerY,
+        radius: HOTSPOT_THRESHOLD,
+        pointIndices: cluster,
+        dataXRange: { min: min(clusterXVals), max: max(clusterXVals) },
+        dataYRange: { min: min(clusterYVals), max: max(clusterYVals) }
+      };
+      
+      hotspots.push(hotspot);
+    }
+  }
+}
+
 // --- Scatterplot ---
 function drawScatterplot(xIndex, yIndex) {
   fill(0);
   textSize(14);
-  text(`Scatterplot: ${allDimNames[xIndex]} vs ${allDimNames[yIndex]}`, scatterplotX+40, scatterplotY - 40);
+  let title = isZoomed ? `Scatterplot: ${allDimNames[xIndex]} vs ${allDimNames[yIndex]} (ZOOMED)` : 
+                         `Scatterplot: ${allDimNames[xIndex]} vs ${allDimNames[yIndex]}`;
+  text(title, scatterplotX+40, scatterplotY - 40);
 
-  let xVals = points.map(p => p.dims[xIndex]);
-  let yVals = points.map(p => p.dims[yIndex]);
-  let minX = min(xVals), maxX = max(xVals);
-  let minY = min(yVals), maxY = max(yVals);
+  let currentXRange = isZoomed ? zoomedXRange : originalXRange;
+  let currentYRange = isZoomed ? zoomedYRange : originalYRange;
 
   // --- Draw axes ---
   stroke(80);
@@ -142,7 +236,7 @@ function drawScatterplot(xIndex, yIndex) {
   for (let i = 0; i <= numTicks; i++) {
     // X axis ticks
     let xTick = scatterplotX + (i / numTicks) * scatterplotSize;
-    let xValue = nf(lerp(minX, maxX, i / numTicks), 1, 2);
+    let xValue = nf(lerp(currentXRange.min, currentXRange.max, i / numTicks), 1, 2);
     stroke(80);
     line(xTick, scatterplotY + scatterplotSize, xTick, scatterplotY + scatterplotSize + 6);
     noStroke();
@@ -152,7 +246,7 @@ function drawScatterplot(xIndex, yIndex) {
 
     // Y axis ticks
     let yTick = scatterplotY + scatterplotSize - (i / numTicks) * scatterplotSize;
-    let yValue = nf(lerp(minY, maxY, i / numTicks), 1, 2);
+    let yValue = nf(lerp(currentYRange.min, currentYRange.max, i / numTicks), 1, 2);
     stroke(80);
     line(scatterplotX - 6, yTick, scatterplotX, yTick);
     noStroke();
@@ -169,11 +263,25 @@ function drawScatterplot(xIndex, yIndex) {
   textAlign(RIGHT, CENTER);
   text(allDimNames[yIndex], scatterplotX - 32, scatterplotY + scatterplotSize / 2);
 
+  // --- Draw hotspots (only when not zoomed) ---
+  if (!isZoomed && hotspots.length > 0) {
+    drawHotspots();
+  }
+
   // --- Draw points ---
   for (let i = 0; i < points.length; i++) {
     let p = points[i];
-    let x = map(p.dims[xIndex], minX, maxX, scatterplotX, scatterplotX + scatterplotSize);
-    let y = map(p.dims[yIndex], minY, maxY, scatterplotY + scatterplotSize, scatterplotY);
+    
+    // Skip points outside current zoom range
+    if (isZoomed) {
+      if (p.dims[xIndex] < currentXRange.min || p.dims[xIndex] > currentXRange.max ||
+          p.dims[yIndex] < currentYRange.min || p.dims[yIndex] > currentYRange.max) {
+        continue;
+      }
+    }
+    
+    let x = map(p.dims[xIndex], currentXRange.min, currentXRange.max, scatterplotX, scatterplotX + scatterplotSize);
+    let y = map(p.dims[yIndex], currentYRange.min, currentYRange.max, scatterplotY + scatterplotSize, scatterplotY);
 
     // Determine point color and highlight based on hover state
     let pointColor;
@@ -191,9 +299,9 @@ function drawScatterplot(xIndex, yIndex) {
       highlightStrokeWeight = 2;
     } else if (tableHoverId && String(p.id) === tableHoverId) {
       // Table row hover
-      pointColor = 'orange';
+      pointColor = color(80, 200, 120); // Green
       showHighlight = true;
-      highlightColor = color(255, 165, 0); // Orange
+      highlightColor = color(80, 200, 120); // Green
       highlightSize = POINT_SIZE + 15;
       highlightStrokeWeight = 3;
     } else {
@@ -229,9 +337,90 @@ function drawScatterplot(xIndex, yIndex) {
     rect(boxX, boxY, boxWidth, boxHeight);
     noStroke();
     fill(0);
+    textAlign(LEFT, CENTER);
     // Position text with padding inside the box
-    text(p.title, boxX+boxWidth-10, boxY+boxHeight/2);
+    text(p.title, boxX + 10, boxY + boxHeight/2);
   }
+
+  // --- Draw zoom out instruction when zoomed ---
+  if (isZoomed) {
+    fill(100);
+    textSize(12);
+    textAlign(LEFT, TOP);
+    text("Click outside the plot area to zoom out", scatterplotX, scatterplotY - 20);
+  }
+}
+
+function drawHotspots() {
+  for (let hotspot of hotspots) {
+    // Draw semi-transparent pink circle
+    fill(255, 192, 203, 100); // Pink with transparency
+    stroke(255, 105, 180, 150); // Darker pink border
+    strokeWeight(2);
+    ellipse(hotspot.centerX, hotspot.centerY, hotspot.radius * 2, hotspot.radius * 2);
+    
+    // Draw number of points in the hotspot
+    fill(255, 105, 180);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(10);
+    text(hotspot.pointIndices.length, hotspot.centerX, hotspot.centerY);
+  }
+  
+  // Reset text alignment to default for other text elements
+  textAlign(LEFT, TOP);
+}
+
+function mousePressed() {
+  // Check if click is within scatterplot area
+  if (mouseX >= scatterplotX && mouseX <= scatterplotX + scatterplotSize &&
+      mouseY >= scatterplotY && mouseY <= scatterplotY + scatterplotSize) {
+    
+    if (!isZoomed) {
+      // Check if click is on a hotspot
+      for (let hotspot of hotspots) {
+        if (dist(mouseX, mouseY, hotspot.centerX, hotspot.centerY) <= hotspot.radius) {
+          zoomIntoHotspot(hotspot);
+          return;
+        }
+      }
+    }
+  } else {
+    // Click outside scatterplot area - zoom out if currently zoomed
+    if (isZoomed) {
+      zoomOut();
+    }
+  }
+}
+
+function zoomIntoHotspot(hotspot) {
+  isZoomed = true;
+  zoomedHotspot = hotspot;
+  
+  // Add some padding around the hotspot data range
+  let xPadding = (hotspot.dataXRange.max - hotspot.dataXRange.min) * 0.1;
+  let yPadding = (hotspot.dataYRange.max - hotspot.dataYRange.min) * 0.1;
+  
+  zoomedXRange.min = hotspot.dataXRange.min - xPadding;
+  zoomedXRange.max = hotspot.dataXRange.max + xPadding;
+  zoomedYRange.min = hotspot.dataYRange.min - yPadding;
+  zoomedYRange.max = hotspot.dataYRange.max + yPadding;
+  
+  console.log(`Zoomed into hotspot with ${hotspot.pointIndices.length} points`);
+}
+
+function zoomOut() {
+  isZoomed = false;
+  zoomedHotspot = null;
+  console.log("Zoomed out to original view");
+}
+
+function drawSliderLabel() {
+  // Draw label for the hotspot slider
+  fill(0);
+  textAlign(LEFT, CENTER);
+  textSize(12);
+  text(`Hotspot Size: ${HOTSPOT_THRESHOLD}px`, 440, 45);
 }
 
 // --- DataTables population ---
