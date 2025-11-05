@@ -4,7 +4,7 @@ let hoverIndex = -1;
 let hoverCol = ''; // 'url' or 'text' when hovering
 
 // UI elements
-let xDimSelect, yDimSelect, hotspotSlider;
+let xDimSelect, yDimSelect, hotspotSlider, umapToggle;
 let allDimNames = [];
 let scatterplotX = 100; // Left margin for scatterplot
 let scatterplotY = 100; // Top margin for scatterplot
@@ -23,8 +23,19 @@ let zoomedYRange = { min: 0, max: 1 };
 let HOTSPOT_THRESHOLD = 40; // Will be controlled by slider
 let MIN_CLUSTER_SIZE = 10; // Minimum number of points to form a hotspot (increased from 3)
 
+// UMAP background variables
+let umapImage;
+let showUMAP = false;
+let umapHotspots = []; // User-created hotspots on UMAP
+let selectedUmapHotspot = -1; // Index of currently selected UMAP hotspot
+let exportButton, importToggle;
+let importHotspots = false;
+let isDraggingHotspot = false; // Track if we're currently dragging a hotspot
+let dragOffset = { x: 0, y: 0 }; // Offset from hotspot center to mouse when dragging starts
+
 function preload() {
   table = loadTable('data.csv', 'csv', 'header');
+  umapImage = loadImage('wikiClustersStaticVisual/wiki_umap_full.png');
 }
 
 function setup() {
@@ -70,6 +81,31 @@ function setup() {
   hotspotSlider.style('z-index', '1001');
   hotspotSlider.style('width', '150px');
 
+  // Create UMAP toggle
+  umapToggle = createCheckbox('Show UMAP', false);
+  umapToggle.position(610, 20);
+  umapToggle.style('position', 'fixed');
+  umapToggle.style('z-index', '1001');
+  umapToggle.style('color', 'black');
+  umapToggle.changed(toggleUMAP);
+
+  // Create export button (initially hidden)
+  exportButton = createButton('Export Hotspots');
+  exportButton.position(scatterplotX, scatterplotY + scatterplotSize + 60);
+  exportButton.style('position', 'fixed');
+  exportButton.style('z-index', '1001');
+  exportButton.style('display', 'none');
+  exportButton.mousePressed(exportUmapHotspots);
+
+  // Create import toggle (initially hidden)
+  importToggle = createCheckbox('Import Hotspots', false);
+  importToggle.position(scatterplotX + 120, scatterplotY + scatterplotSize + 60);
+  importToggle.style('position', 'fixed');
+  importToggle.style('z-index', '1001');
+  importToggle.style('color', 'black');
+  importToggle.style('display', 'none');
+  importToggle.changed(toggleImport);
+
   // Populate dropdowns with dimension names
   for (let name of allDimNames) {
     xDimSelect.option(name);
@@ -97,31 +133,44 @@ function draw() {
 
   // Update HOTSPOT_THRESHOLD from slider
   HOTSPOT_THRESHOLD = hotspotSlider.value();
+  
+  // Update selected UMAP hotspot size if one is selected (real-time control)
+  if (showUMAP && selectedUmapHotspot !== -1 && selectedUmapHotspot < umapHotspots.length) {
+    umapHotspots[selectedUmapHotspot].size = HOTSPOT_THRESHOLD;
+  }
 
-  // Update data ranges and hotspots when not zoomed
-  if (!isZoomed) {
+  // Update data ranges and hotspots when not zoomed and not in UMAP mode
+  if (!isZoomed && !showUMAP) {
     updateDataRanges(xIndex, yIndex);
     detectHotspots(xIndex, yIndex);
   }
 
-  detectHover(xIndex, yIndex);
+  // Detect hover only when not in UMAP mode
+  if (!showUMAP) {
+    detectHover(xIndex, yIndex);
 
-  // Highlight the row that matches the hovered point's id
-  if (hoverIndex !== -1) {
-    let hoveredId = points[hoverIndex].id;
+    // Highlight the row that matches the hovered point's id
+    if (hoverIndex !== -1) {
+      let hoveredId = points[hoverIndex].id;
 
-    // Only call locateRowById if the hovered ID has changed
-    if (hoveredId !== lastHoveredId) {
-      console.log(`Hovered ID: ${hoveredId}`);
-      locateRowById(hoveredId);
-      lastHoveredId = hoveredId; // Update the last hovered ID
+      // Only call locateRowById if the hovered ID has changed
+      if (hoveredId !== lastHoveredId) {
+        console.log(`Hovered ID: ${hoveredId}`);
+        locateRowById(hoveredId);
+        lastHoveredId = hoveredId; // Update the last hovered ID
+      }
+    } else {
+      lastHoveredId = null; // Reset when no point is hovered
     }
-  } else {
-    lastHoveredId = null; // Reset when no point is hovered
   }
 
   drawScatterplot(xIndex, yIndex);
   drawSliderLabel();
+  
+  // Handle hotspot dragging
+  if (showUMAP && isDraggingHotspot && selectedUmapHotspot !== -1) {
+    handleHotspotDragging();
+  }
 }
 
 function detectHover(xIndex, yIndex) {
@@ -221,6 +270,11 @@ function drawScatterplot(xIndex, yIndex) {
   let currentXRange = isZoomed ? zoomedXRange : originalXRange;
   let currentYRange = isZoomed ? zoomedYRange : originalYRange;
 
+  // --- Draw UMAP background (if enabled) - draw first so it's behind everything ---
+  if (showUMAP && umapImage) {
+    drawUMAPBackground();
+  }
+
   // --- Draw axes ---
   stroke(80);
   strokeWeight(2);
@@ -263,68 +317,75 @@ function drawScatterplot(xIndex, yIndex) {
   textAlign(RIGHT, CENTER);
   text(allDimNames[yIndex], scatterplotX - 32, scatterplotY + scatterplotSize / 2);
 
-  // --- Draw hotspots (only when not zoomed) ---
-  if (!isZoomed && hotspots.length > 0) {
+  // --- Draw hotspots (only when not zoomed and UMAP is off) ---
+  if (!isZoomed && !showUMAP && hotspots.length > 0) {
     drawHotspots();
   }
 
-  // --- Draw points ---
-  for (let i = 0; i < points.length; i++) {
-    let p = points[i];
-    
-    // Skip points outside current zoom range
-    if (isZoomed) {
-      if (p.dims[xIndex] < currentXRange.min || p.dims[xIndex] > currentXRange.max ||
-          p.dims[yIndex] < currentYRange.min || p.dims[yIndex] > currentYRange.max) {
-        continue;
+  // --- Draw UMAP hotspots (only when UMAP is on) ---
+  if (showUMAP) {
+    drawUmapHotspots();
+  }
+
+  // --- Draw points (only when UMAP is off) ---
+  if (!showUMAP) {
+    for (let i = 0; i < points.length; i++) {
+      let p = points[i];
+      
+      // Skip points outside current zoom range
+      if (isZoomed) {
+        if (p.dims[xIndex] < currentXRange.min || p.dims[xIndex] > currentXRange.max ||
+            p.dims[yIndex] < currentYRange.min || p.dims[yIndex] > currentYRange.max) {
+          continue;
+        }
       }
+      
+      let x = map(p.dims[xIndex], currentXRange.min, currentXRange.max, scatterplotX, scatterplotX + scatterplotSize);
+      let y = map(p.dims[yIndex], currentYRange.min, currentYRange.max, scatterplotY + scatterplotSize, scatterplotY);
+
+      // Determine point color and highlight based on hover state
+      let pointColor;
+      let showHighlight = false;
+      let highlightColor;
+      let highlightSize;
+      let highlightStrokeWeight;
+
+      if (hoverIndex === i) {
+        // Scatterplot hover
+        pointColor = 'orange';
+        showHighlight = true;
+        highlightColor = color(255, 165, 0); // Orange
+        highlightSize = POINT_SIZE + 10;
+        highlightStrokeWeight = 2;
+      } else if (tableHoverId && String(p.id) === tableHoverId) {
+        // Table row hover
+        pointColor = color(80, 200, 120); // Green
+        showHighlight = true;
+        highlightColor = color(80, 200, 120); // Green
+        highlightSize = POINT_SIZE + 15;
+        highlightStrokeWeight = 3;
+      } else {
+        // Default
+        pointColor = 'steelblue';
+      }
+
+      // Draw highlight circle if needed
+      if (showHighlight) {
+        noFill();
+        stroke(highlightColor);
+        strokeWeight(highlightStrokeWeight);
+        ellipse(x, y, highlightSize, highlightSize);
+      }
+
+      // Draw the actual point with the determined color
+      noStroke();
+      fill(pointColor);
+      ellipse(x, y, POINT_SIZE, POINT_SIZE);
     }
-    
-    let x = map(p.dims[xIndex], currentXRange.min, currentXRange.max, scatterplotX, scatterplotX + scatterplotSize);
-    let y = map(p.dims[yIndex], currentYRange.min, currentYRange.max, scatterplotY + scatterplotSize, scatterplotY);
-
-    // Determine point color and highlight based on hover state
-    let pointColor;
-    let showHighlight = false;
-    let highlightColor;
-    let highlightSize;
-    let highlightStrokeWeight;
-
-    if (hoverIndex === i) {
-      // Scatterplot hover
-      pointColor = 'orange';
-      showHighlight = true;
-      highlightColor = color(255, 165, 0); // Orange
-      highlightSize = POINT_SIZE + 10;
-      highlightStrokeWeight = 2;
-    } else if (tableHoverId && String(p.id) === tableHoverId) {
-      // Table row hover
-      pointColor = color(80, 200, 120); // Green
-      showHighlight = true;
-      highlightColor = color(80, 200, 120); // Green
-      highlightSize = POINT_SIZE + 15;
-      highlightStrokeWeight = 3;
-    } else {
-      // Default
-      pointColor = 'steelblue';
-    }
-
-    // Draw highlight circle if needed
-    if (showHighlight) {
-      noFill();
-      stroke(highlightColor);
-      strokeWeight(highlightStrokeWeight);
-      ellipse(x, y, highlightSize, highlightSize);
-    }
-
-    // Draw the actual point with the determined color
-    noStroke();
-    fill(pointColor);
-    ellipse(x, y, POINT_SIZE, POINT_SIZE);
   }
 
   // --- Hover box logic (reset strokeWeight and stroke) ---
-  if (hoverIndex !== -1 && hoverCol === '') {
+  if (!showUMAP && hoverIndex !== -1 && hoverCol === '') {
     let p = points[hoverIndex];
     strokeWeight(1); // Thin border
     stroke(0);       // Black border
@@ -372,24 +433,111 @@ function drawHotspots() {
 }
 
 function mousePressed() {
+  // Don't process mouse events if they're on UI elements
+  if (mouseX < scatterplotX || mouseX > scatterplotX + scatterplotSize || 
+      mouseY < scatterplotY || mouseY > scatterplotY + scatterplotSize) {
+    // Only deselect if we're clearly outside the scatterplot area and not on UI controls
+    if (showUMAP && mouseY > scatterplotY + scatterplotSize + 30) { // Give some buffer for UI elements
+      selectedUmapHotspot = -1;
+      console.log("Deselected hotspot - clicked outside plot area");
+    } else if (!showUMAP && isZoomed) {
+      zoomOut();
+    }
+    return;
+  }
+
   // Check if click is within scatterplot area
   if (mouseX >= scatterplotX && mouseX <= scatterplotX + scatterplotSize &&
       mouseY >= scatterplotY && mouseY <= scatterplotY + scatterplotSize) {
     
-    if (!isZoomed) {
-      // Check if click is on a hotspot
-      for (let hotspot of hotspots) {
-        if (dist(mouseX, mouseY, hotspot.centerX, hotspot.centerY) <= hotspot.radius) {
-          zoomIntoHotspot(hotspot);
-          return;
+    if (showUMAP) {
+      // UMAP mode: handle hotspot creation and selection
+      if (!importHotspots) {
+        // Check if clicking on existing UMAP hotspot
+        let clickedHotspot = -1;
+        for (let i = 0; i < umapHotspots.length; i++) {
+          let hotspot = umapHotspots[i];
+          if (dist(mouseX, mouseY, hotspot.x, hotspot.y) <= hotspot.size) {
+            clickedHotspot = i;
+            break;
+          }
+        }
+        
+        if (clickedHotspot !== -1) {
+          // Select existing hotspot and update slider to match its size
+          selectedUmapHotspot = clickedHotspot;
+          hotspotSlider.value(umapHotspots[clickedHotspot].size); // Set slider to match hotspot size
+          
+          // Prepare for potential dragging
+          isDraggingHotspot = true;
+          dragOffset.x = mouseX - umapHotspots[clickedHotspot].x;
+          dragOffset.y = mouseY - umapHotspots[clickedHotspot].y;
+          
+          console.log(`Selected UMAP hotspot ${clickedHotspot + 1} with size ${umapHotspots[clickedHotspot].size}px`);
+        } else {
+          // Create new hotspot with current slider value
+          let newHotspot = {
+            x: mouseX,
+            y: mouseY,
+            size: HOTSPOT_THRESHOLD  // Use current slider value
+          };
+          umapHotspots.push(newHotspot);
+          selectedUmapHotspot = umapHotspots.length - 1; // Auto-select the newly created hotspot
+          
+          // Prepare for potential dragging of the new hotspot
+          isDraggingHotspot = true;
+          dragOffset.x = 0; // Mouse is at center of new hotspot
+          dragOffset.y = 0;
+          
+          console.log(`Created new UMAP hotspot at (${mouseX}, ${mouseY}) with size ${HOTSPOT_THRESHOLD}px - automatically selected for slider control`);
+          console.log(`Selected hotspot index: ${selectedUmapHotspot}, Total hotspots: ${umapHotspots.length}`);
+        }
+      }
+    } else {
+      // Original mode: handle data point hotspots
+      if (!isZoomed) {
+        // Check if click is on a hotspot
+        for (let hotspot of hotspots) {
+          if (dist(mouseX, mouseY, hotspot.centerX, hotspot.centerY) <= hotspot.radius) {
+            zoomIntoHotspot(hotspot);
+            return;
+          }
         }
       }
     }
-  } else {
-    // Click outside scatterplot area - zoom out if currently zoomed
-    if (isZoomed) {
-      zoomOut();
-    }
+  }
+}
+
+function mouseReleased() {
+  // Stop dragging when mouse is released
+  if (isDraggingHotspot) {
+    isDraggingHotspot = false;
+    console.log("Stopped dragging hotspot");
+  }
+}
+
+function keyPressed() {
+  // Delete selected hotspot when Delete key is pressed
+  if (showUMAP && selectedUmapHotspot !== -1 && (key === 'Delete' || keyCode === DELETE)) {
+    let deletedIndex = selectedUmapHotspot;
+    umapHotspots.splice(selectedUmapHotspot, 1);
+    selectedUmapHotspot = -1; // Clear selection after deletion
+    console.log(`Deleted UMAP hotspot ${deletedIndex + 1}. Remaining hotspots: ${umapHotspots.length}`);
+  }
+}
+
+function handleHotspotDragging() {
+  // Update hotspot position while dragging, constrained to scatterplot area
+  if (selectedUmapHotspot < umapHotspots.length) {
+    let newX = mouseX - dragOffset.x;
+    let newY = mouseY - dragOffset.y;
+    
+    // Constrain to scatterplot boundaries
+    newX = constrain(newX, scatterplotX, scatterplotX + scatterplotSize);
+    newY = constrain(newY, scatterplotY, scatterplotY + scatterplotSize);
+    
+    umapHotspots[selectedUmapHotspot].x = newX;
+    umapHotspots[selectedUmapHotspot].y = newY;
   }
 }
 
@@ -420,7 +568,158 @@ function drawSliderLabel() {
   fill(0);
   textAlign(LEFT, CENTER);
   textSize(12);
-  text(`Hotspot Size: ${HOTSPOT_THRESHOLD}px`, 440, 45);
+  let labelText = `Hotspot Size: ${HOTSPOT_THRESHOLD}px`;
+  
+  // Add debug info if a hotspot is selected
+  if (showUMAP && selectedUmapHotspot !== -1 && selectedUmapHotspot < umapHotspots.length) {
+    let selectedSize = umapHotspots[selectedUmapHotspot].size;
+    labelText += ` (Selected H${selectedUmapHotspot + 1}: ${selectedSize}px)`;
+  } else if (showUMAP) {
+    labelText += ` (No hotspot selected - selectedIndex: ${selectedUmapHotspot}, totalHotspots: ${umapHotspots.length})`;
+  }
+  
+  text(labelText, 440, 45);
+}
+
+function toggleUMAP() {
+  showUMAP = umapToggle.checked();
+  console.log('UMAP background:', showUMAP ? 'ON' : 'OFF');
+  
+  // Show/hide UMAP-related UI elements
+  if (showUMAP) {
+    exportButton.style('display', 'block');
+    importToggle.style('display', 'block');
+  } else {
+    exportButton.style('display', 'none');
+    importToggle.style('display', 'none');
+    selectedUmapHotspot = -1; // Clear selection when UMAP is turned off
+  }
+}
+
+function drawUMAPBackground() {
+  // Draw the UMAP image to fit exactly within the scatterplot area
+  // The image will be drawn behind everything else (axes, points, hotspots will be on top)
+  tint(255, 180); // Make it slightly transparent so axes and points are visible
+  image(umapImage, scatterplotX, scatterplotY, scatterplotSize, scatterplotSize);
+  noTint(); // Reset tint for other elements
+}
+
+function drawUmapHotspots() {
+  // Only show hotspots when import is ON, or when import is OFF (creation mode)
+  // This means hotspots are always visible in creation mode, and only visible in import mode when toggled
+  if (!importHotspots || importToggle.checked()) {
+    for (let i = 0; i < umapHotspots.length; i++) {
+      let hotspot = umapHotspots[i];
+      
+      // Determine if this hotspot is selected
+      let isSelected = (selectedUmapHotspot === i);
+      
+      // Draw orange hotspot circle
+      fill(255, 165, 0, 100); // Orange with transparency
+      stroke(255, 140, 0, isSelected ? 255 : 150); // Darker orange border, brighter if selected
+      strokeWeight(isSelected ? 4 : 2); // Thicker border if selected
+      ellipse(hotspot.x, hotspot.y, hotspot.size * 2, hotspot.size * 2);
+      
+      // Draw hotspot label
+      fill(255, 140, 0);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(10);
+      text(`H${i + 1}`, hotspot.x, hotspot.y);
+    }
+  }
+  
+  // Reset text alignment
+  textAlign(LEFT, TOP);
+}
+
+function toggleImport() {
+  importHotspots = importToggle.checked();
+  console.log('Import hotspots:', importHotspots ? 'ON' : 'OFF');
+  
+  if (importHotspots) {
+    loadUmapHotspots();
+  }
+}
+
+function exportUmapHotspots() {
+  if (umapHotspots.length === 0) {
+    console.log('No hotspots to export');
+    return;
+  }
+  
+  // Create CSV content
+  let csvContent = 'id,x,y,size\n';
+  for (let i = 0; i < umapHotspots.length; i++) {
+    let hotspot = umapHotspots[i];
+    // Convert screen coordinates to relative coordinates (0-1)
+    let relX = (hotspot.x - scatterplotX) / scatterplotSize;
+    let relY = (hotspot.y - scatterplotY) / scatterplotSize;
+    csvContent += `${i + 1},${relX.toFixed(4)},${relY.toFixed(4)},${hotspot.size}\n`;
+  }
+  
+  // Create and download the file
+  let blob = new Blob([csvContent], { type: 'text/csv' });
+  let url = URL.createObjectURL(blob);
+  let a = document.createElement('a');
+  a.href = url;
+  a.download = 'umap_hotspots.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  console.log(`Exported ${umapHotspots.length} hotspots to umap_hotspots.csv`);
+}
+
+function loadUmapHotspots() {
+  // Create a file input element
+  let input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.csv';
+  
+  input.onchange = function(event) {
+    let file = event.target.files[0];
+    if (!file) return;
+    
+    let reader = new FileReader();
+    reader.onload = function(e) {
+      let csvContent = e.target.result;
+      parseUmapHotspots(csvContent);
+    };
+    reader.readAsText(file);
+  };
+  
+  input.click();
+}
+
+function parseUmapHotspots(csvContent) {
+  let lines = csvContent.trim().split('\n');
+  if (lines.length < 2) {
+    console.log('Invalid CSV file');
+    return;
+  }
+  
+  // Clear existing hotspots
+  umapHotspots = [];
+  
+  // Parse CSV (skip header)
+  for (let i = 1; i < lines.length; i++) {
+    let parts = lines[i].split(',');
+    if (parts.length >= 4) {
+      let relX = parseFloat(parts[1]);
+      let relY = parseFloat(parts[2]);
+      let size = parseFloat(parts[3]);
+      
+      // Convert relative coordinates back to screen coordinates
+      let x = scatterplotX + relX * scatterplotSize;
+      let y = scatterplotY + relY * scatterplotSize;
+      
+      umapHotspots.push({ x: x, y: y, size: size });
+    }
+  }
+  
+  console.log(`Loaded ${umapHotspots.length} hotspots from CSV`);
 }
 
 // --- DataTables population ---
