@@ -32,10 +32,14 @@ let exportButton, importToggle;
 let importHotspots = false;
 let isDraggingHotspot = false; // Track if we're currently dragging a hotspot
 let dragOffset = { x: 0, y: 0 }; // Offset from hotspot center to mouse when dragging starts
+let lastClickTime = 0; // For detecting double-clicks
+let showPlaceholder = false; // Track if placeholder image is being shown
+let placeholderImage; // Placeholder image to display
 
 function preload() {
   table = loadTable('data.csv', 'csv', 'header');
   umapImage = loadImage('wikiClustersStaticVisual/wiki_umap_full.png');
+  placeholderImage = loadImage('PlaceHolder.png');
 }
 
 function setup() {
@@ -327,6 +331,11 @@ function drawScatterplot(xIndex, yIndex) {
     drawUmapHotspots();
   }
 
+  // --- Draw placeholder image overlay (when activated) ---
+  if (showPlaceholder && placeholderImage) {
+    drawPlaceholderOverlay();
+  }
+
   // --- Draw points (only when UMAP is off) ---
   if (!showUMAP) {
     for (let i = 0; i < points.length; i++) {
@@ -433,6 +442,16 @@ function drawHotspots() {
 }
 
 function mousePressed() {
+  // If placeholder is showing, any click outside scatterplot area closes it
+  if (showPlaceholder) {
+    if (mouseX < scatterplotX || mouseX > scatterplotX + scatterplotSize || 
+        mouseY < scatterplotY || mouseY > scatterplotY + scatterplotSize) {
+      showPlaceholder = false;
+      console.log("Closed placeholder image");
+      return;
+    }
+  }
+  
   // Don't process mouse events if they're on UI elements
   if (mouseX < scatterplotX || mouseX > scatterplotX + scatterplotSize || 
       mouseY < scatterplotY || mouseY > scatterplotY + scatterplotSize) {
@@ -450,20 +469,41 @@ function mousePressed() {
   if (mouseX >= scatterplotX && mouseX <= scatterplotX + scatterplotSize &&
       mouseY >= scatterplotY && mouseY <= scatterplotY + scatterplotSize) {
     
+    // Don't allow interactions when placeholder is showing
+    if (showPlaceholder) {
+      return;
+    }
+    
     if (showUMAP) {
       // UMAP mode: handle hotspot creation and selection
       if (!importHotspots) {
         // Check if clicking on existing UMAP hotspot
         let clickedHotspot = -1;
+        let clickedOnLabel = false;
         for (let i = 0; i < umapHotspots.length; i++) {
           let hotspot = umapHotspots[i];
           if (dist(mouseX, mouseY, hotspot.x, hotspot.y) <= hotspot.size) {
             clickedHotspot = i;
+            
+            // Check if click is specifically on the label text area (center of hotspot)
+            if (dist(mouseX, mouseY, hotspot.x, hotspot.y) <= 15) {
+              clickedOnLabel = true;
+            }
             break;
           }
         }
         
         if (clickedHotspot !== -1) {
+          // Check for double-click on label
+          let currentTime = millis();
+          if (clickedOnLabel && currentTime - lastClickTime < 300 && selectedUmapHotspot === clickedHotspot) {
+            // Double-click on label - prompt for new label
+            editHotspotLabel(clickedHotspot);
+            lastClickTime = 0; // Reset to prevent triple-click
+            return;
+          }
+          lastClickTime = currentTime;
+          
           // Select existing hotspot and update slider to match its size
           selectedUmapHotspot = clickedHotspot;
           hotspotSlider.value(umapHotspots[clickedHotspot].size); // Set slider to match hotspot size
@@ -479,7 +519,8 @@ function mousePressed() {
           let newHotspot = {
             x: mouseX,
             y: mouseY,
-            size: HOTSPOT_THRESHOLD  // Use current slider value
+            size: HOTSPOT_THRESHOLD,  // Use current slider value
+            label: `H${umapHotspots.length + 1}`  // Default label
           };
           umapHotspots.push(newHotspot);
           selectedUmapHotspot = umapHotspots.length - 1; // Auto-select the newly created hotspot
@@ -517,12 +558,18 @@ function mouseReleased() {
 }
 
 function keyPressed() {
-  // Delete selected hotspot when Delete key is pressed
-  if (showUMAP && selectedUmapHotspot !== -1 && (key === 'Delete' || keyCode === DELETE)) {
+  // Delete selected hotspot when Backspace key is pressed
+  if (showUMAP && selectedUmapHotspot !== -1 && keyCode === BACKSPACE && !showPlaceholder) {
     let deletedIndex = selectedUmapHotspot;
     umapHotspots.splice(selectedUmapHotspot, 1);
     selectedUmapHotspot = -1; // Clear selection after deletion
     console.log(`Deleted UMAP hotspot ${deletedIndex + 1}. Remaining hotspots: ${umapHotspots.length}`);
+  }
+  
+  // Show placeholder image when Enter key is pressed on selected hotspot
+  if (showUMAP && selectedUmapHotspot !== -1 && keyCode === ENTER && !showPlaceholder) {
+    showPlaceholder = true;
+    console.log(`Showing placeholder image for hotspot ${selectedUmapHotspot + 1}`);
   }
 }
 
@@ -621,11 +668,14 @@ function drawUmapHotspots() {
       ellipse(hotspot.x, hotspot.y, hotspot.size * 2, hotspot.size * 2);
       
       // Draw hotspot label
-      fill(255, 140, 0);
+      fill(200, 80, 0); // Deeper orange for better readability
       noStroke();
       textAlign(CENTER, CENTER);
-      textSize(10);
-      text(`H${i + 1}`, hotspot.x, hotspot.y);
+      textSize(12);
+      textStyle(BOLD);
+      let label = hotspot.label || `H${i + 1}`; // Use custom label or default
+      text(label, hotspot.x, hotspot.y);
+      textStyle(NORMAL); // Reset to normal style
     }
   }
   
@@ -649,13 +699,14 @@ function exportUmapHotspots() {
   }
   
   // Create CSV content
-  let csvContent = 'id,x,y,size\n';
+  let csvContent = 'id,x,y,size,label\n';
   for (let i = 0; i < umapHotspots.length; i++) {
     let hotspot = umapHotspots[i];
     // Convert screen coordinates to relative coordinates (0-1)
     let relX = (hotspot.x - scatterplotX) / scatterplotSize;
     let relY = (hotspot.y - scatterplotY) / scatterplotSize;
-    csvContent += `${i + 1},${relX.toFixed(4)},${relY.toFixed(4)},${hotspot.size}\n`;
+    let label = hotspot.label || `H${i + 1}`;
+    csvContent += `${i + 1},${relX.toFixed(4)},${relY.toFixed(4)},${hotspot.size},"${label}"\n`;
   }
   
   // Create and download the file
@@ -705,21 +756,67 @@ function parseUmapHotspots(csvContent) {
   
   // Parse CSV (skip header)
   for (let i = 1; i < lines.length; i++) {
-    let parts = lines[i].split(',');
-    if (parts.length >= 4) {
-      let relX = parseFloat(parts[1]);
-      let relY = parseFloat(parts[2]);
-      let size = parseFloat(parts[3]);
+    // Handle CSV with quoted labels
+    let match = lines[i].match(/^([^,]+),([^,]+),([^,]+),([^,]+),"?([^"]*)"?$/);
+    if (match) {
+      let relX = parseFloat(match[2]);
+      let relY = parseFloat(match[3]);
+      let size = parseFloat(match[4]);
+      let label = match[5] || `H${i}`;
       
       // Convert relative coordinates back to screen coordinates
       let x = scatterplotX + relX * scatterplotSize;
       let y = scatterplotY + relY * scatterplotSize;
       
-      umapHotspots.push({ x: x, y: y, size: size });
+      umapHotspots.push({ x: x, y: y, size: size, label: label });
+    } else {
+      // Fallback for old CSV format without labels
+      let parts = lines[i].split(',');
+      if (parts.length >= 4) {
+        let relX = parseFloat(parts[1]);
+        let relY = parseFloat(parts[2]);
+        let size = parseFloat(parts[3]);
+        
+        // Convert relative coordinates back to screen coordinates
+        let x = scatterplotX + relX * scatterplotSize;
+        let y = scatterplotY + relY * scatterplotSize;
+        
+        umapHotspots.push({ x: x, y: y, size: size, label: `H${i}` });
+      }
     }
   }
   
   console.log(`Loaded ${umapHotspots.length} hotspots from CSV`);
+}
+
+function editHotspotLabel(hotspotIndex) {
+  if (hotspotIndex < 0 || hotspotIndex >= umapHotspots.length) return;
+  
+  let currentLabel = umapHotspots[hotspotIndex].label || `H${hotspotIndex + 1}`;
+  let newLabel = prompt('Enter custom label for this hotspot:', currentLabel);
+  
+  if (newLabel !== null && newLabel.trim() !== '') {
+    umapHotspots[hotspotIndex].label = newLabel.trim();
+    console.log(`Updated hotspot ${hotspotIndex + 1} label to: "${newLabel.trim()}"`);
+  }
+}
+
+function drawPlaceholderOverlay() {
+  // Draw semi-transparent overlay to dim the background
+  fill(0, 0, 0, 150);
+  noStroke();
+  rect(scatterplotX, scatterplotY, scatterplotSize, scatterplotSize);
+  
+  // Draw the placeholder image centered in the scatterplot area
+  image(placeholderImage, scatterplotX, scatterplotY, scatterplotSize, scatterplotSize);
+  
+  // Draw instruction text
+  fill(255);
+  textSize(14);
+  textAlign(CENTER, TOP);
+  textStyle(BOLD);
+  text('Click outside the plot area to return to UMAP', scatterplotX + scatterplotSize / 2, scatterplotY + scatterplotSize + 10);
+  textStyle(NORMAL);
 }
 
 // --- DataTables population ---
