@@ -36,8 +36,16 @@ let lastClickTime = 0; // For detecting double-clicks
 let showPlaceholder = false; // Track if placeholder image is being shown
 let placeholderImage; // Placeholder image to display
 
+// Question visualization variables
+let showQuestions = false;
+let questionToggle;
+
+// U01 visualization variables
+let showU01 = false;
+let u01Toggle;
+
 function preload() {
-  table = loadTable('data.csv', 'csv', 'header');
+  table = loadTable('KZLcryPBDv.csv', 'csv', 'header');
   umapImage = loadImage('wikiClustersStaticVisual/wiki_umap_full.png');
   placeholderImage = loadImage('PlaceHolder.png');
 }
@@ -63,7 +71,9 @@ function setup() {
     let title = table.getString(r, 'title');
     let text = table.getString(r, 'text');
     let dims = allDimNames.map(d => float(table.getString(r, d)));
-    points.push({ id, url, title, text, dims });
+    let questionExists = table.columns.includes('QuestionExists') ? table.getString(r, 'QuestionExists') : '0';
+    let u01 = table.columns.includes('u01') ? float(table.getString(r, 'u01')) : 0;
+    points.push({ id, url, title, text, dims, questionExists, u01 });
   }
 
   // Scatterplot dimension selectors
@@ -92,6 +102,22 @@ function setup() {
   umapToggle.style('z-index', '1001');
   umapToggle.style('color', 'black');
   umapToggle.changed(toggleUMAP);
+
+  // Create Question toggle
+  questionToggle = createCheckbox('Show Questions', false);
+  questionToggle.position(610, 45);
+  questionToggle.style('position', 'fixed');
+  questionToggle.style('z-index', '1001');
+  questionToggle.style('color', 'black');
+  questionToggle.changed(toggleQuestions);
+
+  // Create U01 toggle
+  u01Toggle = createCheckbox('Show U01 Values', false);
+  u01Toggle.position(610, 70);
+  u01Toggle.style('position', 'fixed');
+  u01Toggle.style('z-index', '1001');
+  u01Toggle.style('color', 'black');
+  u01Toggle.changed(toggleU01);
 
   // Create export button (initially hidden)
   exportButton = createButton('Export Hotspots');
@@ -321,8 +347,8 @@ function drawScatterplot(xIndex, yIndex) {
   textAlign(RIGHT, CENTER);
   text(allDimNames[yIndex], scatterplotX - 32, scatterplotY + scatterplotSize / 2);
 
-  // --- Draw hotspots (only when not zoomed and UMAP is off) ---
-  if (!isZoomed && !showUMAP && hotspots.length > 0) {
+  // --- Draw hotspots (only when not zoomed and UMAP is off and questions mode is off and u01 mode is off) ---
+  if (!isZoomed && !showUMAP && !showQuestions && !showU01 && hotspots.length > 0) {
     drawHotspots();
   }
 
@@ -359,23 +385,77 @@ function drawScatterplot(xIndex, yIndex) {
       let highlightSize;
       let highlightStrokeWeight;
 
-      if (hoverIndex === i) {
-        // Scatterplot hover
-        pointColor = 'orange';
-        showHighlight = true;
-        highlightColor = color(255, 165, 0); // Orange
-        highlightSize = POINT_SIZE + 10;
-        highlightStrokeWeight = 2;
-      } else if (tableHoverId && String(p.id) === tableHoverId) {
-        // Table row hover
-        pointColor = color(80, 200, 120); // Green
-        showHighlight = true;
-        highlightColor = color(80, 200, 120); // Green
-        highlightSize = POINT_SIZE + 15;
-        highlightStrokeWeight = 3;
+      if (showQuestions) {
+        // Question visualization mode: color based on QuestionExists column
+        if (hoverIndex === i) {
+          // Scatterplot hover
+          pointColor = p.questionExists !== '0' ? 'orange' : color(150, 150, 150);
+          showHighlight = true;
+          highlightColor = p.questionExists !== '0' ? color(255, 165, 0) : color(100, 100, 100);
+          highlightSize = POINT_SIZE + 10;
+          highlightStrokeWeight = 2;
+        } else if (tableHoverId && String(p.id) === tableHoverId) {
+          // Table row hover
+          pointColor = color(80, 200, 120); // Green
+          showHighlight = true;
+          highlightColor = color(80, 200, 120); // Green
+          highlightSize = POINT_SIZE + 15;
+          highlightStrokeWeight = 3;
+        } else {
+          // Default: orange if question exists, grey otherwise
+          pointColor = p.questionExists !== '0' ? color(255, 165, 0) : color(150, 150, 150);
+          // Add circle around orange points to make them more obvious
+          if (p.questionExists !== '0') {
+            showHighlight = true;
+            highlightColor = color(255, 165, 0);
+            highlightSize = POINT_SIZE + 6;
+            highlightStrokeWeight = 1;
+          }
+        }
+      } else if (showU01) {
+        // U01 visualization mode: color based on u01 value (0=green, 1=red)
+        let u01Value = constrain(p.u01, 0, 1);
+        let greenAmount = (1 - u01Value) * 255;
+        let redAmount = u01Value * 255;
+        
+        if (hoverIndex === i) {
+          // Scatterplot hover
+          pointColor = color(redAmount, greenAmount, 0);
+          showHighlight = true;
+          highlightColor = color(redAmount, greenAmount, 0);
+          highlightSize = POINT_SIZE + 10;
+          highlightStrokeWeight = 2;
+        } else if (tableHoverId && String(p.id) === tableHoverId) {
+          // Table row hover
+          pointColor = color(80, 200, 120); // Green
+          showHighlight = true;
+          highlightColor = color(80, 200, 120); // Green
+          highlightSize = POINT_SIZE + 15;
+          highlightStrokeWeight = 3;
+        } else {
+          // Default: gradient from green (0) to red (1)
+          pointColor = color(redAmount, greenAmount, 0);
+        }
       } else {
-        // Default
-        pointColor = 'steelblue';
+        // Normal mode
+        if (hoverIndex === i) {
+          // Scatterplot hover
+          pointColor = 'orange';
+          showHighlight = true;
+          highlightColor = color(255, 165, 0); // Orange
+          highlightSize = POINT_SIZE + 10;
+          highlightStrokeWeight = 2;
+        } else if (tableHoverId && String(p.id) === tableHoverId) {
+          // Table row hover
+          pointColor = color(80, 200, 120); // Green
+          showHighlight = true;
+          highlightColor = color(80, 200, 120); // Green
+          highlightSize = POINT_SIZE + 15;
+          highlightStrokeWeight = 3;
+        } else {
+          // Default
+          pointColor = 'steelblue';
+        }
       }
 
       // Draw highlight circle if needed
@@ -617,14 +697,6 @@ function drawSliderLabel() {
   textSize(12);
   let labelText = `Hotspot Size: ${HOTSPOT_THRESHOLD}px`;
   
-  // Add debug info if a hotspot is selected
-  if (showUMAP && selectedUmapHotspot !== -1 && selectedUmapHotspot < umapHotspots.length) {
-    let selectedSize = umapHotspots[selectedUmapHotspot].size;
-    labelText += ` (Selected H${selectedUmapHotspot + 1}: ${selectedSize}px)`;
-  } else if (showUMAP) {
-    labelText += ` (No hotspot selected - selectedIndex: ${selectedUmapHotspot}, totalHotspots: ${umapHotspots.length})`;
-  }
-  
   text(labelText, 440, 45);
 }
 
@@ -632,8 +704,16 @@ function toggleUMAP() {
   showUMAP = umapToggle.checked();
   console.log('UMAP background:', showUMAP ? 'ON' : 'OFF');
   
-  // Show/hide UMAP-related UI elements
+  // Turn off Questions and U01 when UMAP is enabled
   if (showUMAP) {
+    if (showQuestions) {
+      showQuestions = false;
+      questionToggle.checked(false);
+    }
+    if (showU01) {
+      showU01 = false;
+      u01Toggle.checked(false);
+    }
     exportButton.style('display', 'block');
     importToggle.style('display', 'block');
   } else {
@@ -819,11 +899,51 @@ function drawPlaceholderOverlay() {
   textStyle(NORMAL);
 }
 
+function toggleQuestions() {
+  showQuestions = questionToggle.checked();
+  console.log('Question visualization:', showQuestions ? 'ON' : 'OFF');
+  
+  // Turn off UMAP and U01 when questions mode is enabled
+  if (showQuestions) {
+    if (showUMAP) {
+      showUMAP = false;
+      umapToggle.checked(false);
+      exportButton.style('display', 'none');
+      importToggle.style('display', 'none');
+      selectedUmapHotspot = -1;
+    }
+    if (showU01) {
+      showU01 = false;
+      u01Toggle.checked(false);
+    }
+  }
+}
+
+function toggleU01() {
+  showU01 = u01Toggle.checked();
+  console.log('U01 visualization:', showU01 ? 'ON' : 'OFF');
+  
+  // Turn off UMAP and Questions when u01 mode is enabled
+  if (showU01) {
+    if (showUMAP) {
+      showUMAP = false;
+      umapToggle.checked(false);
+      exportButton.style('display', 'none');
+      importToggle.style('display', 'none');
+      selectedUmapHotspot = -1;
+    }
+    if (showQuestions) {
+      showQuestions = false;
+      questionToggle.checked(false);
+    }
+  }
+}
+
 // --- DataTables population ---
 function populateDataTable() {
-  // Show all dimensions, let DataTables handle scrolling/visibility
-  let dimHeaders = allDimNames;
-  let headers = ['id', 'title', 'url', 'text', ...dimHeaders];
+  // Get all column names from the CSV
+  let allColumns = table.columns;
+  let headers = allColumns;
 
   let tableRows = points.map(p => {
     // Split text into lines and keep only the first 4
@@ -833,13 +953,32 @@ function populateDataTable() {
       trimmedText += '\n...';
     }
 
+    // Build row with all columns from the CSV
     let row = [
       p.id,
       p.title,
-      p.url,
-      trimmedText,
-      ...dimHeaders.map(dim => p.dims[allDimNames.indexOf(dim)].toFixed(2))
+      p.url
     ];
+    
+    // Add dimension values
+    row.push(...p.dims.map(d => d.toFixed(2)));
+    
+    // Add additional columns (uniq_z, u01, QuestionExists, text)
+    // Extract these from the table for this row index
+    let rowIndex = points.indexOf(p);
+    if (table.columns.includes('uniq_z')) {
+      row.push(table.getString(rowIndex, 'uniq_z'));
+    }
+    if (table.columns.includes('u01')) {
+      row.push(table.getString(rowIndex, 'u01'));
+    }
+    if (table.columns.includes('text')) {
+      row.push(trimmedText);
+    }
+    if (table.columns.includes('QuestionExists')) {
+      row.push(table.getString(rowIndex, 'QuestionExists'));
+    }
+    
     return row;
   });
 
@@ -866,11 +1005,13 @@ function populateDataTable() {
       style: 'single'
     },
     columnDefs: [
-      { width: "600px", targets: 3 },
-      ...allDimNames.slice(3).map((_, i) => ({
-        visible: false,
-        targets: i + 4
-      }))
+      { 
+        width: "400px", 
+        targets: allColumns.indexOf('text') >= 0 ? allColumns.indexOf('text') : -1,
+        render: function(data, type, row) {
+          return '<div style="width: 400px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' + data + '</div>';
+        }
+      }
     ],
     dom: 'Bfrtip',
     buttons: ['colvis'],
