@@ -44,8 +44,15 @@ let questionToggle;
 let showU01 = false;
 let u01Toggle;
 
+// Old data visualization variables
+let oldTable;
+let oldPoints = [];
+let showOldData = false;
+let oldAllDimNames = [];
+
 function preload() {
   table = loadTable('KZLcryPBDv.csv', 'csv', 'header');
+  oldTable = loadTable('data.csv', 'csv', 'header');
   umapImage = loadImage('wikiClustersStaticVisual/wiki_umap_full.png');
   placeholderImage = loadImage('PlaceHolder.png');
 }
@@ -63,8 +70,9 @@ function setup() {
 
   // Detect all dimensions
   allDimNames = table.columns.filter(c => c.startsWith('d'));
+  oldAllDimNames = oldTable.columns.filter(c => c.startsWith('d'));
 
-  // Extract points
+  // Extract points from new CSV
   for (let r = 0; r < table.getRowCount(); r++) {
     let id = table.getString(r, 'id');
     let url = table.getString(r, 'url');
@@ -74,6 +82,16 @@ function setup() {
     let questionExists = table.columns.includes('QuestionExists') ? table.getString(r, 'QuestionExists') : '0';
     let u01 = table.columns.includes('u01') ? float(table.getString(r, 'u01')) : 0;
     points.push({ id, url, title, text, dims, questionExists, u01 });
+  }
+
+  // Extract points from old CSV
+  for (let r = 0; r < oldTable.getRowCount(); r++) {
+    let id = oldTable.getString(r, 'id');
+    let url = oldTable.getString(r, 'url');
+    let title = oldTable.getString(r, 'title');
+    let text = oldTable.getString(r, 'text');
+    let dims = oldAllDimNames.map(d => float(oldTable.getString(r, d)));
+    oldPoints.push({ id, url, title, text, dims });
   }
 
   // Scatterplot dimension selectors
@@ -137,10 +155,7 @@ function setup() {
   importToggle.changed(toggleImport);
 
   // Populate dropdowns with dimension names
-  for (let name of allDimNames) {
-    xDimSelect.option(name);
-    yDimSelect.option(name);
-  }
+  populateDimensionDropdowns();
   xDimSelect.selected(allDimNames[0]);
   yDimSelect.selected(allDimNames[1]);
 
@@ -150,6 +165,7 @@ function setup() {
 
 let lastHoveredId = null; // Track the last hovered ID
 let tableHoverId = null; // Track which row is hovered in the table
+let oldDataHoverIndex = -1; // Track hovered point in old data
 
 function draw() {
   background(250);
@@ -158,8 +174,15 @@ function draw() {
   let xName = xDimSelect.value();
   let yName = yDimSelect.value();
 
-  let xIndex = allDimNames.indexOf(xName);
-  let yIndex = allDimNames.indexOf(yName);
+  // Use appropriate indices based on whether showing old data
+  let xIndex, yIndex;
+  if (showOldData) {
+    xIndex = 0; // Always d1
+    yIndex = 1; // Always d2
+  } else {
+    xIndex = allDimNames.indexOf(xName);
+    yIndex = allDimNames.indexOf(yName);
+  }
 
   // Update HOTSPOT_THRESHOLD from slider
   HOTSPOT_THRESHOLD = hotspotSlider.value();
@@ -169,14 +192,14 @@ function draw() {
     umapHotspots[selectedUmapHotspot].size = HOTSPOT_THRESHOLD;
   }
 
-  // Update data ranges and hotspots when not zoomed and not in UMAP mode
-  if (!isZoomed && !showUMAP) {
+  // Update data ranges and hotspots when not zoomed and not in UMAP mode and not showing old data
+  if (!isZoomed && !showUMAP && !showOldData) {
     updateDataRanges(xIndex, yIndex);
     detectHotspots(xIndex, yIndex);
   }
 
   // Detect hover only when not in UMAP mode
-  if (!showUMAP) {
+  if (!showUMAP && !showOldData) {
     detectHover(xIndex, yIndex);
 
     // Highlight the row that matches the hovered point's id
@@ -192,6 +215,11 @@ function draw() {
     } else {
       lastHoveredId = null; // Reset when no point is hovered
     }
+  }
+  
+  // Detect hover on old data points
+  if (showOldData && showPlaceholder) {
+    detectOldDataHover(xIndex, yIndex);
   }
 
   drawScatterplot(xIndex, yIndex);
@@ -228,6 +256,22 @@ function detectHover(xIndex, yIndex) {
 
     if (dist(mouseX, mouseY, x, y) < 6) {
       hoverIndex = i;
+      break;
+    }
+  }
+}
+
+function detectOldDataHover(xIndex, yIndex) {
+  oldDataHoverIndex = -1; // Reset hover index
+  
+  for (let i = 0; i < oldPoints.length; i++) {
+    let p = oldPoints[i];
+    
+    let x = map(p.dims[xIndex], min(oldPoints.map(pt => pt.dims[xIndex])), max(oldPoints.map(pt => pt.dims[xIndex])), scatterplotX, scatterplotX + scatterplotSize);
+    let y = map(p.dims[yIndex], min(oldPoints.map(pt => pt.dims[yIndex])), max(oldPoints.map(pt => pt.dims[yIndex])), scatterplotY + scatterplotSize, scatterplotY);
+    
+    if (dist(mouseX, mouseY, x, y) < 6) {
+      oldDataHoverIndex = i;
       break;
     }
   }
@@ -293,8 +337,17 @@ function detectHotspots(xIndex, yIndex) {
 function drawScatterplot(xIndex, yIndex) {
   fill(0);
   textSize(14);
-  let title = isZoomed ? `Scatterplot: ${allDimNames[xIndex]} vs ${allDimNames[yIndex]} (ZOOMED)` : 
-                         `Scatterplot: ${allDimNames[xIndex]} vs ${allDimNames[yIndex]}`;
+  
+  // Use appropriate data source and title
+  let currentPoints = showOldData ? oldPoints : points;
+  let currentDimNames = showOldData ? oldAllDimNames : allDimNames;
+  
+  let title;
+  if (isZoomed) {
+    title = `Scatterplot: ${allDimNames[xIndex]} vs ${allDimNames[yIndex]} (ZOOMED)`;
+  } else {
+    title = `Scatterplot: ${allDimNames[xIndex]} vs ${allDimNames[yIndex]}`;
+  }
   text(title, scatterplotX+40, scatterplotY - 40);
 
   let currentXRange = isZoomed ? zoomedXRange : originalXRange;
@@ -361,9 +414,24 @@ function drawScatterplot(xIndex, yIndex) {
   if (showPlaceholder && placeholderImage) {
     drawPlaceholderOverlay();
   }
+  
+  // --- Draw old data points on top of placeholder ---
+  if (showOldData && showPlaceholder) {
+    for (let i = 0; i < oldPoints.length; i++) {
+      let p = oldPoints[i];
+      
+      let x = map(p.dims[xIndex], min(oldPoints.map(pt => pt.dims[xIndex])), max(oldPoints.map(pt => pt.dims[xIndex])), scatterplotX, scatterplotX + scatterplotSize);
+      let y = map(p.dims[yIndex], min(oldPoints.map(pt => pt.dims[yIndex])), max(oldPoints.map(pt => pt.dims[yIndex])), scatterplotY + scatterplotSize, scatterplotY);
+
+      // Draw the point
+      noStroke();
+      fill('steelblue');
+      ellipse(x, y, POINT_SIZE, POINT_SIZE);
+    }
+  }
 
   // --- Draw points (only when UMAP is off) ---
-  if (!showUMAP) {
+  if (!showUMAP && !showOldData) {
     for (let i = 0; i < points.length; i++) {
       let p = points[i];
       
@@ -474,8 +542,27 @@ function drawScatterplot(xIndex, yIndex) {
   }
 
   // --- Hover box logic (reset strokeWeight and stroke) ---
-  if (!showUMAP && hoverIndex !== -1 && hoverCol === '') {
+  if (!showUMAP && hoverIndex !== -1 && hoverCol === '' && !showOldData) {
     let p = points[hoverIndex];
+    strokeWeight(1); // Thin border
+    stroke(0);       // Black border
+    fill(255);
+    let boxWidth = min(textWidth(p.title) + 20, 400);
+    let boxHeight = 30;
+    // Position box to the left of the mouse
+    let boxX = mouseX - boxWidth - 10;
+    let boxY = mouseY - 20;
+    rect(boxX, boxY, boxWidth, boxHeight);
+    noStroke();
+    fill(0);
+    textAlign(LEFT, CENTER);
+    // Position text with padding inside the box
+    text(p.title, boxX + 10, boxY + boxHeight/2);
+  }
+  
+  // --- Hover box for old data points ---
+  if (showOldData && oldDataHoverIndex !== -1) {
+    let p = oldPoints[oldDataHoverIndex];
     strokeWeight(1); // Thin border
     stroke(0);       // Black border
     fill(255);
@@ -522,12 +609,30 @@ function drawHotspots() {
 }
 
 function mousePressed() {
-  // If placeholder is showing, any click outside scatterplot area closes it
+  // If placeholder is showing, click inside shows old data overlay, click outside closes it
   if (showPlaceholder) {
+    if (mouseX >= scatterplotX && mouseX <= scatterplotX + scatterplotSize &&
+        mouseY >= scatterplotY && mouseY <= scatterplotY + scatterplotSize) {
+      // Click inside placeholder - show old data overlay
+      showOldData = true;
+      console.log("Showing old data.csv scatterplot (d1 vs d2) over placeholder");
+      return;
+    } else {
+      // Click outside - close placeholder and old data
+      showPlaceholder = false;
+      showOldData = false;
+      console.log("Closed placeholder image");
+      return;
+    }
+  }
+  
+  // If showing old data, click outside closes it and placeholder
+  if (showOldData) {
     if (mouseX < scatterplotX || mouseX > scatterplotX + scatterplotSize || 
         mouseY < scatterplotY || mouseY > scatterplotY + scatterplotSize) {
+      showOldData = false;
       showPlaceholder = false;
-      console.log("Closed placeholder image");
+      console.log("Closed old data view and placeholder");
       return;
     }
   }
@@ -895,8 +1000,27 @@ function drawPlaceholderOverlay() {
   textSize(14);
   textAlign(CENTER, TOP);
   textStyle(BOLD);
-  text('Click outside the plot area to return to UMAP', scatterplotX + scatterplotSize / 2, scatterplotY + scatterplotSize + 10);
+  if (showOldData) {
+    text('Old data overlay active - Click outside to return to UMAP', scatterplotX + scatterplotSize / 2, scatterplotY + scatterplotSize + 10);
+  } else {
+    text('Click image to view old data, click outside to return to UMAP', scatterplotX + scatterplotSize / 2, scatterplotY + scatterplotSize + 10);
+  }
   textStyle(NORMAL);
+}
+
+function populateDimensionDropdowns() {
+  // Clear existing options
+  xDimSelect.html('');
+  yDimSelect.html('');
+  
+  // Use appropriate dimension names
+  let dimNames = showOldData ? oldAllDimNames : allDimNames;
+  
+  // Populate dropdowns
+  for (let name of dimNames) {
+    xDimSelect.option(name);
+    yDimSelect.option(name);
+  }
 }
 
 function toggleQuestions() {
