@@ -6,8 +6,8 @@ let hoverCol = ''; // 'url' or 'text' when hovering
 // UI elements
 let xDimSelect, yDimSelect, hotspotSlider, umapToggle;
 let allDimNames = [];
-let scatterplotX = 100; // Left margin for scatterplot
-let scatterplotY = 100; // Top margin for scatterplot
+let scatterplotX = 60; // Left margin for scatterplot
+let scatterplotY = 60; // Top margin for scatterplot
 let scatterplotSize = 600; // Square size for scatterplot
 let ROW_HEIGHT = 150; // Global variable for row height
 let POINT_SIZE = 5; // Default point size
