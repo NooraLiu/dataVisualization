@@ -59,11 +59,9 @@ function preload() {
 
 function setup() {
   let cnv = createCanvas(800, 1000);
-  cnv.parent('scatterplot-holder'); // Attach canvas to a container div
-  cnv.style('position', 'fixed');   // Fix the canvas position
-  cnv.style('top', '0px');          // Lock it to the top
-  cnv.style('left', '0px');         // Lock it to the left
-  cnv.style('z-index', '1000');     // Ensure it stays above other elements
+  cnv.parent('scatterplot-holder');
+  cnv.style('position', 'relative');
+  cnv.style('z-index', '1000');
   noStroke();
   textAlign(LEFT, TOP);
   textSize(12);
@@ -99,23 +97,25 @@ function setup() {
   yDimSelect = createSelect();
 
   // Position dropdowns and make them fixed
-  xDimSelect.position(120, 20); // Adjusted for visibility
-  yDimSelect.position(280, 20); // Adjusted for visibility
-  xDimSelect.style('position', 'fixed'); // Fix the dropdown position
+  // X selector at end of x-axis (right side)
+  xDimSelect.position(scatterplotX + scatterplotSize + 35, scatterplotY + scatterplotSize + 65);
+  // Y selector at end of y-axis (top)
+  yDimSelect.position(scatterplotX -40, scatterplotY + 30);
+  xDimSelect.style('position', 'fixed');
   yDimSelect.style('position', 'fixed');
-  xDimSelect.style('z-index', '1001');   // Ensure dropdowns appear above the canvas
+  xDimSelect.style('z-index', '1001');
   yDimSelect.style('z-index', '1001');
 
   // Create hotspot threshold slider
-  hotspotSlider = createSlider(20, 80, 40, 5); // min: 20, max: 80, default: 40, step: 5
-  hotspotSlider.position(440, 20);
+  hotspotSlider = createSlider(20, 80, 40, 5);
+  hotspotSlider.position(440, 125);
   hotspotSlider.style('position', 'fixed');
   hotspotSlider.style('z-index', '1001');
   hotspotSlider.style('width', '150px');
 
   // Create UMAP toggle
   umapToggle = createCheckbox('Show UMAP', false);
-  umapToggle.position(610, 20);
+  umapToggle.position(630, 110);
   umapToggle.style('position', 'fixed');
   umapToggle.style('z-index', '1001');
   umapToggle.style('color', 'black');
@@ -123,7 +123,7 @@ function setup() {
 
   // Create Question toggle
   questionToggle = createCheckbox('Show Questions', false);
-  questionToggle.position(610, 45);
+  questionToggle.position(630, 135);
   questionToggle.style('position', 'fixed');
   questionToggle.style('z-index', '1001');
   questionToggle.style('color', 'black');
@@ -131,7 +131,7 @@ function setup() {
 
   // Create U01 toggle
   u01Toggle = createCheckbox('Show U01 Values', false);
-  u01Toggle.position(610, 70);
+  u01Toggle.position(630, 160);
   u01Toggle.style('position', 'fixed');
   u01Toggle.style('z-index', '1001');
   u01Toggle.style('color', 'black');
@@ -139,7 +139,7 @@ function setup() {
 
   // Create export button (initially hidden)
   exportButton = createButton('Export Hotspots');
-  exportButton.position(scatterplotX, scatterplotY + scatterplotSize + 60);
+  exportButton.position(scatterplotX + 20, scatterplotY + scatterplotSize + 150);
   exportButton.style('position', 'fixed');
   exportButton.style('z-index', '1001');
   exportButton.style('display', 'none');
@@ -147,7 +147,7 @@ function setup() {
 
   // Create import toggle (initially hidden)
   importToggle = createCheckbox('Import Hotspots', false);
-  importToggle.position(scatterplotX + 120, scatterplotY + scatterplotSize + 60);
+  importToggle.position(scatterplotX + 140, scatterplotY + scatterplotSize + 155);
   importToggle.style('position', 'fixed');
   importToggle.style('z-index', '1001');
   importToggle.style('color', 'black');
@@ -393,12 +393,15 @@ function drawScatterplot(xIndex, yIndex) {
   }
 
   // --- Axis labels ---
+  // Labels are now replaced by dropdown selectors, so we don't draw text here anymore
+  /*
   textSize(12);
   fill(0);
   textAlign(CENTER, TOP);
   text(allDimNames[xIndex], scatterplotX + scatterplotSize / 2, scatterplotY + scatterplotSize + 32);
   textAlign(RIGHT, CENTER);
   text(allDimNames[yIndex], scatterplotX - 32, scatterplotY + scatterplotSize / 2);
+  */
 
   // --- Draw hotspots (only when not zoomed and UMAP is off and questions mode is off and u01 mode is off) ---
   if (!isZoomed && !showUMAP && !showQuestions && !showU01 && hotspots.length > 0) {
@@ -802,7 +805,7 @@ function drawSliderLabel() {
   textSize(12);
   let labelText = `Hotspot Size: ${HOTSPOT_THRESHOLD}px`;
   
-  text(labelText, 440, 45);
+  text(labelText, 460, 70);
 }
 
 function toggleUMAP() {
@@ -1118,13 +1121,12 @@ function populateDataTable() {
     $('#data-table').DataTable().destroy();
   }
 
-  // Initialize DataTables with Scroller enabled
+  // Initialize DataTables with pagination enabled
   $('#data-table').DataTable({
     scrollX: true,
-    scrollY: '700px',
-    scroller: {
-      rowHeight: ROW_HEIGHT
-    },
+    paging: true,
+    pageLength: 25,
+    lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
     select: {
       style: 'single'
     },
@@ -1137,7 +1139,7 @@ function populateDataTable() {
         }
       }
     ],
-    dom: 'Bfrtip',
+    dom: 'Blfrtip',
     buttons: ['colvis'],
     createdRow: function(row, data, dataIndex) {
       $(row).css('height', `${ROW_HEIGHT}px`);
@@ -1171,15 +1173,13 @@ function locateRowById(hoveredId) {
     let rowIndexInView = dt.rows({ order: 'applied' }).indexes().toArray().indexOf(row.index());
     console.log(`Row Index in Current View: ${rowIndexInView}`);
 
-    // Use DataTables Scroller API to scroll to the row
-    if ($.fn.DataTable.isDataTable('#data-table') && dt.scroller) {
-      // Scroll to the row and align it to the top
-      dt.scroller().scrollToRow(rowIndexInView, true, function() {
-        console.log(`Scrolled to row with ID ${hoveredId} and aligned it to the top.`);
-      });
-    } else {
-      console.log('Scroller extension is not enabled. Cannot scroll to the row.');
-    }
+    // Calculate which page the row is on and navigate to it
+    let pageLength = dt.page.len();
+    let pageNumber = Math.floor(rowIndexInView / pageLength);
+    
+    // Navigate to the page containing the row
+    dt.page(pageNumber).draw(false);
+    console.log(`Navigated to page ${pageNumber} for row with ID ${hoveredId}.`);
   } else {
     console.log(`Row with ID ${hoveredId} not found.`);
   }
