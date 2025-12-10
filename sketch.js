@@ -1071,6 +1071,10 @@ function populateDataTable() {
   // Get all column names from the CSV
   let allColumns = table.columns;
   let headers = allColumns;
+  
+  console.log('Column order:', allColumns);
+  console.log('text column index:', allColumns.indexOf('text'));
+  console.log('d1 column index:', allColumns.indexOf('d1'));
 
   let tableRows = points.map(p => {
     // Split text into lines and keep only the first 4
@@ -1109,9 +1113,26 @@ function populateDataTable() {
     return row;
   });
 
-  let thead = '<thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead>';
+  let thead = '<thead><tr>' + headers.map(h => {
+    let width = '80px'; // default width
+    if (h.startsWith('d')) {
+      width = '70px'; // dimension columns
+    } else if (h === 'url') {
+      width = '80px';
+    }
+    return `<th style="width: ${width}; min-width: ${width}; max-width: ${width};" title="${h}">${h}</th>`;
+  }).join('') + '</tr></thead>';
   let tbody = '<tbody>' + tableRows.map(row =>
-    '<tr>' + row.map(cell => `<td>${cell}</td>`).join('') + '</tr>'
+    '<tr>' + row.map((cell, idx) => {
+      let width = '80px'; // default width
+      let colName = headers[idx];
+      if (colName.startsWith('d')) {
+        width = '70px'; // dimension columns
+      } else if (colName === 'url') {
+        width = '80px';
+      }
+      return `<td style="width: ${width}; min-width: ${width}; max-width: ${width};" title="${cell}">${cell}</td>`;
+    }).join('') + '</tr>'
   ).join('') + '</tbody>';
 
   $('#data-table').html(thead + tbody);
@@ -1131,12 +1152,13 @@ function populateDataTable() {
       style: 'single'
     },
     columnDefs: [
-      { 
-        width: "400px", 
-        targets: allColumns.indexOf('text') >= 0 ? allColumns.indexOf('text') : -1,
-        render: function(data, type, row) {
-          return '<div style="width: 400px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' + data + '</div>';
-        }
+      {
+        width: "80px",
+        targets: allColumns.indexOf('url') >= 0 ? allColumns.indexOf('url') : -1
+      },
+      {
+        width: "70px",
+        targets: allDimNames.map(dimName => allColumns.indexOf(dimName)).filter(idx => idx >= 0)
       }
     ],
     dom: 'Blfrtip',
@@ -1154,6 +1176,25 @@ function populateDataTable() {
       });
     }
   });
+  
+  // Add double-click handler for URL column
+  let urlColumnIndex = allColumns.indexOf('url');
+  if (urlColumnIndex >= 0) {
+    $('#data-table').on('dblclick', `td:nth-child(${urlColumnIndex + 1})`, function() {
+      let urlText = $(this).text();
+      navigator.clipboard.writeText(urlText).then(() => {
+        console.log('URL copied to clipboard:', urlText);
+        // Visual feedback
+        let originalBg = $(this).css('background-color');
+        $(this).css('background-color', '#90EE90');
+        setTimeout(() => {
+          $(this).css('background-color', originalBg);
+        }, 300);
+      }).catch(err => {
+        console.error('Failed to copy URL:', err);
+      });
+    });
+  }
 }
 
 // --- Locate row by ID ---

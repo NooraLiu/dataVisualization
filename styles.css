@@ -86,18 +86,27 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  position: relative;
+  cursor: pointer;
 }
 
-/* Allow text wrapping only in the "text" column */
-#data-table th:nth-child(4),
-#data-table td:nth-child(4) {
-  min-width: 600px;
-  max-width: 600px;
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Custom tooltip on hover */
+#data-table tbody td:hover::after {
+  content: attr(title);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  white-space: pre-wrap;
   word-wrap: break-word;
-  max-height: 200px;
+  max-width: 400px;
+  z-index: 10000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
 }
 
 canvas {
