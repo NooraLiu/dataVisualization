@@ -139,7 +139,7 @@ function setup() {
 
   // Create export button (initially hidden)
   exportButton = createButton('Export Hotspots');
-  exportButton.position(scatterplotX + 20, scatterplotY + scatterplotSize + 150);
+  exportButton.position(scatterplotX + 20, scatterplotY + scatterplotSize + 125);
   exportButton.style('position', 'fixed');
   exportButton.style('z-index', '1001');
   exportButton.style('display', 'none');
@@ -147,7 +147,7 @@ function setup() {
 
   // Create import toggle (initially hidden)
   importToggle = createCheckbox('Import Hotspots', false);
-  importToggle.position(scatterplotX + 140, scatterplotY + scatterplotSize + 155);
+  importToggle.position(scatterplotX + 180, scatterplotY + scatterplotSize + 132);
   importToggle.style('position', 'fixed');
   importToggle.style('z-index', '1001');
   importToggle.style('color', 'black');
