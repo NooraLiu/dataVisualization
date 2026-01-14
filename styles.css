@@ -95,6 +95,10 @@ body {
   padding: 0;
 }
 
+#data-table {
+  width: 100%;
+}
+
 /* Set a fixed height for all rows */
 #data-table tbody tr {
   height: 150px;
