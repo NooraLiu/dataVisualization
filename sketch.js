@@ -52,6 +52,7 @@ let oldAllDimNames = [];
 
 // Wikipedia link matching variables
 let matchedPointIndices = []; // Track which points match Wikipedia links
+let lastClickedPointIndex = -1; // Track which point was last clicked for Wikipedia links
 
 function preload() {
   table = loadTable('KZLcryPBDv.csv', 'csv', 'header');
@@ -767,7 +768,17 @@ function mousePressed() {
         let y = map(p.dims[yIndex], currentYRange.min, currentYRange.max, scatterplotY + scatterplotSize, scatterplotY);
 
         if (dist(mouseX, mouseY, x, y) < 10) {
-          // Point clicked - fetch Wikipedia links
+          // Point clicked - check if it's the same point as before
+          if (lastClickedPointIndex === i) {
+            // Same point clicked again - turn off visualization
+            console.log('Turning off Wikipedia link visualization');
+            matchedPointIndices = [];
+            lastClickedPointIndex = -1;
+            return;
+          }
+          
+          // Different point - fetch Wikipedia links
+          lastClickedPointIndex = i;
           console.log('Clicked on:', p.title);
           console.log('Fetching Wikipedia links for:', p.title);
           getSubPages(p.title).then(({ redirectedTo, links }) => {

@@ -72,6 +72,10 @@ function bind() {
   tourbtn.addEventListener('click', () => shepherd.start());
   helpButton.addEventListener('click', () => shepherd.start());
 
+  // Bind Back Home button
+  const backHomeButton = document.getElementById('back-home');
+  backHomeButton.addEventListener('click', () => window.location.href = '../index.html');
+
   // Bind GitHub button
   const ghbutton = document.getElementById('github');
   ghbutton.addEventListener('click', () => window.open('https://github.com/controversial/wikipedia-map', '_blank'));
