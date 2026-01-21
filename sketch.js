@@ -50,6 +50,9 @@ let oldPoints = [];
 let showOldData = false;
 let oldAllDimNames = [];
 
+// Wikipedia link matching variables
+let matchedPointIndices = []; // Track which points match Wikipedia links
+
 function preload() {
   table = loadTable('KZLcryPBDv.csv', 'csv', 'header');
   oldTable = loadTable('data.csv', 'csv', 'header');
@@ -523,6 +526,13 @@ function drawScatterplot(xIndex, yIndex) {
           highlightColor = color(80, 200, 120); // Green
           highlightSize = POINT_SIZE + 15;
           highlightStrokeWeight = 3;
+        } else if (matchedPointIndices.includes(i)) {
+          // Wikipedia link match - highlight in purple
+          pointColor = color(147, 51, 234); // Purple
+          showHighlight = true;
+          highlightColor = color(147, 51, 234); // Purple
+          highlightSize = POINT_SIZE + 12;
+          highlightStrokeWeight = 3;
         } else {
           // Default
           pointColor = 'steelblue';
@@ -723,7 +733,7 @@ function mousePressed() {
         }
       }
     } else {
-      // Original mode: handle data point hotspots
+      // Original mode: handle data point hotspots or individual points
       if (!isZoomed) {
         // Check if click is on a hotspot
         for (let hotspot of hotspots) {
@@ -731,6 +741,73 @@ function mousePressed() {
             zoomIntoHotspot(hotspot);
             return;
           }
+        }
+      }
+      
+      // Check if clicking on an individual point to get Wikipedia links
+      let xName = xDimSelect.value();
+      let yName = yDimSelect.value();
+      let xIndex = allDimNames.indexOf(xName);
+      let yIndex = allDimNames.indexOf(yName);
+      let currentXRange = isZoomed ? zoomedXRange : originalXRange;
+      let currentYRange = isZoomed ? zoomedYRange : originalYRange;
+      
+      for (let i = 0; i < points.length; i++) {
+        let p = points[i];
+        
+        // Skip points outside current zoom range
+        if (isZoomed) {
+          if (p.dims[xIndex] < currentXRange.min || p.dims[xIndex] > currentXRange.max ||
+              p.dims[yIndex] < currentYRange.min || p.dims[yIndex] > currentYRange.max) {
+            continue;
+          }
+        }
+        
+        let x = map(p.dims[xIndex], currentXRange.min, currentXRange.max, scatterplotX, scatterplotX + scatterplotSize);
+        let y = map(p.dims[yIndex], currentYRange.min, currentYRange.max, scatterplotY + scatterplotSize, scatterplotY);
+
+        if (dist(mouseX, mouseY, x, y) < 10) {
+          // Point clicked - fetch Wikipedia links
+          console.log('Clicked on:', p.title);
+          console.log('Fetching Wikipedia links for:', p.title);
+          getSubPages(p.title).then(({ redirectedTo, links }) => {
+            console.log('Article (after redirect):', redirectedTo);
+            console.log('First paragraph links:', links);
+            console.log('Number of links:', links.length);
+            
+            // Check for matches in dataset
+            matchedPointIndices = []; // Clear previous matches
+            let matchedTitles = [];
+            
+            for (let j = 0; j < points.length; j++) {
+              let pointTitle = points[j].title.toLowerCase().trim();
+              
+              // Check if any Wikipedia link matches this point's title
+              for (let link of links) {
+                let linkLower = link.toLowerCase().trim();
+                if (pointTitle === linkLower || pointTitle.includes(linkLower) || linkLower.includes(pointTitle)) {
+                  matchedPointIndices.push(j);
+                  matchedTitles.push(points[j].title);
+                  break; // Found a match for this point, move to next point
+                }
+              }
+            }
+            
+            // Console output
+            console.log('---');
+            if (matchedPointIndices.length > 0) {
+              console.log(`✓ Found ${matchedPointIndices.length} matching points in dataset:`);
+              matchedTitles.forEach((title, idx) => {
+                console.log(`  ${idx + 1}. ${title}`);
+              });
+            } else {
+              console.log('✗ No matching points found in dataset');
+            }
+            console.log('---');
+          }).catch(err => {
+            console.error('Error fetching Wikipedia links:', err);
+          });
+          return;
         }
       }
     }
