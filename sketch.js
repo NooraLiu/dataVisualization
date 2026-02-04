@@ -1308,16 +1308,20 @@ function locateRowById(hoveredId) {
 
     // Get the row's position in the current view (after sorting/filtering)
     let rowIndexInView = dt.rows({ order: 'applied' }).indexes().toArray().indexOf(row.index());
-    console.log(`Row Index in Current View: ${rowIndexInView}`);
 
     // Calculate which page the row is on and navigate to it
     let pageLength = dt.page.len();
     let pageNumber = Math.floor(rowIndexInView / pageLength);
     
     // Navigate to the page containing the row
-    dt.page(pageNumber).draw(false);
-    console.log(`Navigated to page ${pageNumber} for row with ID ${hoveredId}.`);
-  } else {
-    console.log(`Row with ID ${hoveredId} not found.`);
+    dt.page(pageNumber).draw('page');
+    
+    // Scroll the row into view within the table container
+    setTimeout(() => {
+      let rowNode = row.node();
+      if (rowNode) {
+        rowNode.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
   }
 }
