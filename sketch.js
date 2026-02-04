@@ -40,9 +40,10 @@ let placeholderImage; // Placeholder image to display
 let showQuestions = false;
 let questionToggle;
 
-// U01 visualization variables
-let showU01 = false;
-let u01Toggle;
+// Scoring visualization variables
+let showScoring = false;
+let scoringSelect;
+let selectedScoring = 'Hotspots';
 
 // Old data visualization variables
 let oldTable;
@@ -133,13 +134,18 @@ function setup() {
   questionToggle.style('color', 'black');
   questionToggle.changed(toggleQuestions);
 
-  // Create U01 toggle
-  u01Toggle = createCheckbox('Show U01 Values', false);
-  u01Toggle.position(630, 160);
-  u01Toggle.style('position', 'fixed');
-  u01Toggle.style('z-index', '1001');
-  u01Toggle.style('color', 'black');
-  u01Toggle.changed(toggleU01);
+  // Create scoring dropdown
+  scoringSelect = createSelect();
+  scoringSelect.option('Hotspots');
+  scoringSelect.option('Uniqueness Score');
+  scoringSelect.option('Influence Score');
+  scoringSelect.option('Pagerank');
+  scoringSelect.option('Total Pageviews');
+  scoringSelect.selected('Hotspots');
+  scoringSelect.position(630, 160);
+  scoringSelect.style('position', 'fixed');
+  scoringSelect.style('z-index', '1001');
+  scoringSelect.changed(handleScoringChange);
 
   // Create export button (initially hidden)
   exportButton = createButton('Export Hotspots');
@@ -407,8 +413,8 @@ function drawScatterplot(xIndex, yIndex) {
   text(allDimNames[yIndex], scatterplotX - 32, scatterplotY + scatterplotSize / 2);
   */
 
-  // --- Draw hotspots (only when not zoomed and UMAP is off and questions mode is off and u01 mode is off) ---
-  if (!isZoomed && !showUMAP && !showQuestions && !showU01 && hotspots.length > 0) {
+  // --- Draw hotspots (only when not zoomed and UMAP is off and questions mode is off and scoring mode is off) ---
+  if (!isZoomed && !showUMAP && !showQuestions && !showScoring && hotspots.length > 0) {
     drawHotspots();
   }
 
@@ -487,8 +493,8 @@ function drawScatterplot(xIndex, yIndex) {
             highlightStrokeWeight = 1;
           }
         }
-      } else if (showU01) {
-        // U01 visualization mode: color based on u01 value (0=green, 1=red)
+      } else if (showScoring && selectedScoring === 'Uniqueness Score') {
+        // Uniqueness Score visualization mode: color based on u01 value (0=green, 1=red)
         let u01Value = constrain(p.u01, 0, 1);
         let greenAmount = (1 - u01Value) * 255;
         let redAmount = u01Value * 255;
@@ -906,9 +912,9 @@ function toggleUMAP() {
       showQuestions = false;
       questionToggle.checked(false);
     }
-    if (showU01) {
-      showU01 = false;
-      u01Toggle.checked(false);
+    if (showScoring) {
+      showScoring = false;
+      scoringSelect.selected('None');
     }
     exportButton.style('display', 'block');
     importToggle.style('display', 'block');
@@ -1127,19 +1133,20 @@ function toggleQuestions() {
       importToggle.style('display', 'none');
       selectedUmapHotspot = -1;
     }
-    if (showU01) {
-      showU01 = false;
-      u01Toggle.checked(false);
+    if (showScoring) {
+      showScoring = false;
+      scoringSelect.selected('None');
     }
   }
 }
 
-function toggleU01() {
-  showU01 = u01Toggle.checked();
-  console.log('U01 visualization:', showU01 ? 'ON' : 'OFF');
+function handleScoringChange() {
+  selectedScoring = scoringSelect.value();
+  showScoring = selectedScoring !== 'Hotspots';
+  console.log('Scoring visualization:', selectedScoring);
   
-  // Turn off UMAP and Questions when u01 mode is enabled
-  if (showU01) {
+  // Turn off UMAP and Questions when scoring mode is enabled
+  if (showScoring) {
     if (showUMAP) {
       showUMAP = false;
       umapToggle.checked(false);
@@ -1158,7 +1165,8 @@ function toggleU01() {
 function populateDataTable() {
   // Get all column names from the CSV
   let allColumns = table.columns;
-  let headers = allColumns;
+  // Replace 'u01' with 'Uniqueness' in the headers
+  let headers = allColumns.map(col => col === 'u01' ? 'Uniqueness' : col);
   
   console.log('Column order:', allColumns);
   console.log('text column index:', allColumns.indexOf('text'));
