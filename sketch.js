@@ -183,6 +183,7 @@ function draw() {
 
   let xName = xDimSelect.value();
   let yName = yDimSelect.value();
+  let inHotspotMode = selectedScoring === 'Hotspots';
 
   // Use appropriate indices based on whether showing old data
   let xIndex, yIndex;
@@ -194,8 +195,10 @@ function draw() {
     yIndex = allDimNames.indexOf(yName);
   }
 
-  // Update HOTSPOT_THRESHOLD from slider
-  HOTSPOT_THRESHOLD = hotspotSlider.value();
+  // Update HOTSPOT_THRESHOLD from slider (only in hotspot mode)
+  if (inHotspotMode) {
+    HOTSPOT_THRESHOLD = hotspotSlider.value();
+  }
   
   // Update selected UMAP hotspot size if one is selected (real-time control)
   if (showUMAP && selectedUmapHotspot !== -1 && selectedUmapHotspot < umapHotspots.length) {
@@ -205,7 +208,9 @@ function draw() {
   // Update data ranges and hotspots when not zoomed and not in UMAP mode and not showing old data
   if (!isZoomed && !showUMAP && !showOldData) {
     updateDataRanges(xIndex, yIndex);
-    detectHotspots(xIndex, yIndex);
+    if (inHotspotMode) {
+      detectHotspots(xIndex, yIndex);
+    }
   }
 
   // Detect hover only when not in UMAP mode
@@ -914,14 +919,20 @@ function toggleUMAP() {
     }
     if (showScoring) {
       showScoring = false;
-      scoringSelect.selected('None');
+      scoringSelect.selected('Hotspots');
+      selectedScoring = 'Hotspots';
     }
     exportButton.style('display', 'block');
     importToggle.style('display', 'block');
+    hotspotSlider.style('display', 'block');
   } else {
     exportButton.style('display', 'none');
     importToggle.style('display', 'none');
     selectedUmapHotspot = -1; // Clear selection when UMAP is turned off
+    // Hide slider if not in Hotspots mode
+    if (selectedScoring !== 'Hotspots') {
+      hotspotSlider.style('display', 'none');
+    }
   }
 }
 
@@ -1144,6 +1155,14 @@ function handleScoringChange() {
   selectedScoring = scoringSelect.value();
   showScoring = selectedScoring !== 'Hotspots';
   console.log('Scoring visualization:', selectedScoring);
+
+  // Show slider in Hotspots mode or when UMAP is on
+  if (selectedScoring === 'Hotspots' || showUMAP) {
+    hotspotSlider.style('display', 'block');
+  } else {
+    hotspotSlider.style('display', 'none');
+    hotspots = [];
+  }
   
   // Turn off UMAP and Questions when scoring mode is enabled
   if (showScoring) {
@@ -1153,6 +1172,7 @@ function handleScoringChange() {
       exportButton.style('display', 'none');
       importToggle.style('display', 'none');
       selectedUmapHotspot = -1;
+      hotspotSlider.style('display', 'none');
     }
     if (showQuestions) {
       showQuestions = false;
