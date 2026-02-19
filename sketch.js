@@ -36,9 +36,11 @@ let tableHoverId = null;
 const DIMENSION_NAMES = [
   'base_pca1', 'base_pca2',
   'instruct_pca1', 'instruct_pca2',
+  'bert_umap1', 'bert_umap2',
   'base_total_influence', 'instruct_total_influence',
   'influence_diff',
   'norm_base_influence', 'norm_instruct_influence',
+  'base_hub_score', 'instruct_hub_score',
 ];
 
 // ── preload ──────────────────────────────────────────────────────────────
@@ -78,11 +80,15 @@ function setup() {
       influenceDiff:          float(table.getString(r, 'influence_diff')),
       baseTopK:               int(table.getString(r, 'base_top_k_count')),
       instructTopK:           int(table.getString(r, 'instruct_top_k_count')),
+      baseHubScore:           float(table.getString(r, 'base_hub_score')),
+      instructHubScore:       float(table.getString(r, 'instruct_hub_score')),
       dims,
     });
   }
 
   // Parse article hotspots
+  let hotspotCols = hotspotTable.columns;
+  let hasBert = hotspotCols.includes('bert_x');
   for (let r = 0; r < hotspotTable.getRowCount(); r++) {
     articleHotspots.push({
       id:           hotspotTable.getString(r, 'id'),
@@ -90,6 +96,8 @@ function setup() {
       baseY:        float(hotspotTable.getString(r, 'base_y')),
       instructX:    float(hotspotTable.getString(r, 'instruct_x')),
       instructY:    float(hotspotTable.getString(r, 'instruct_y')),
+      bertX:        hasBert ? float(hotspotTable.getString(r, 'bert_x')) : 0,
+      bertY:        hasBert ? float(hotspotTable.getString(r, 'bert_y')) : 0,
       size:         float(hotspotTable.getString(r, 'size')),
       label:        hotspotTable.getString(r, 'label'),
       articleId:    hotspotTable.getString(r, 'article_id'),
@@ -115,6 +123,7 @@ function setup() {
   pcaToggle = createSelect();
   pcaToggle.option('Base Model');
   pcaToggle.option('Instruct Model');
+  pcaToggle.option('BERT Embeddings');
   pcaToggle.selected('Base Model');
   pcaToggle.position(440, 80);
   pcaToggle.style('position', 'fixed');
@@ -127,6 +136,8 @@ function setup() {
   scoringSelect.option('Base Influence');
   scoringSelect.option('Instruct Influence');
   scoringSelect.option('Influence Diff');
+  scoringSelect.option('Base Hub Score');
+  scoringSelect.option('Instruct Hub Score');
   scoringSelect.option('Section Level');
   scoringSelect.selected('Article Groups');
   scoringSelect.position(440, 115);
@@ -145,10 +156,14 @@ function handlePCAToggle() {
     pcaMode = 'base';
     xDimSelect.selected('base_pca1');
     yDimSelect.selected('base_pca2');
-  } else {
+  } else if (val === 'Instruct Model') {
     pcaMode = 'instruct';
     xDimSelect.selected('instruct_pca1');
     yDimSelect.selected('instruct_pca2');
+  } else {
+    pcaMode = 'bert';
+    xDimSelect.selected('bert_umap1');
+    yDimSelect.selected('bert_umap2');
   }
   isZoomed = false;
   zoomedHotspot = null;
@@ -231,7 +246,9 @@ function drawLabels() {
   fill(0);
   textAlign(LEFT, CENTER);
   textSize(12);
-  text(`Layout: ${pcaToggle.value()}`, 440, 70);
+  let layoutLabel = pcaToggle.value();
+  if (layoutLabel === 'BERT Embeddings') layoutLabel += ' (bge-large-en-v1.5 UMAP)';
+  text(`Layout: ${layoutLabel}`, 440, 70);
 }
 
 // ── Level colors ─────────────────────────────────────────────────────────
@@ -270,6 +287,24 @@ function pointColor(p) {
         return lerpColor(color(255, 255, 255), color(220, 40, 40), -norm);
       } else {
         return lerpColor(color(255, 255, 255), color(40, 40, 220), norm);
+      }
+    }
+    case 'Base Hub Score':
+    case 'Instruct Hub Score': {
+      let isBase = selectedScoring === 'Base Hub Score';
+      let hub = isBase ? p.baseHubScore : p.instructHubScore;
+      // Diverging: gray (sink, negative) → white (neutral) → hot pink (hub, positive)
+      let maxAbs = 0;
+      for (let pt of points) {
+        let h = isBase ? pt.baseHubScore : pt.instructHubScore;
+        if (abs(h) > maxAbs) maxAbs = abs(h);
+      }
+      if (maxAbs === 0) return color(180);
+      let norm = hub / maxAbs; // [-1, 1]
+      if (norm < 0) {
+        return lerpColor(color(240, 240, 240), color(80, 80, 80), -norm);
+      } else {
+        return lerpColor(color(240, 240, 240), color(255, 20, 100), norm);
       }
     }
     case 'Section Level':
@@ -380,8 +415,9 @@ function drawScatterplot(xIndex, yIndex) {
     fill(255);
     let line1 = `${p.articleTitle} > ${p.heading}`;
     let line2 = `Base: ${p.baseInfluence.toFixed(3)}  |  Instruct: ${p.instructInfluence.toFixed(3)}`;
-    let boxW = max(textWidth(line1), textWidth(line2)) + 24;
-    let boxH = 44;
+    let line3 = `Hub: ${p.baseHubScore.toFixed(0)} (base)  |  ${p.instructHubScore.toFixed(0)} (instruct)`;
+    let boxW = max(textWidth(line1), textWidth(line2), textWidth(line3)) + 24;
+    let boxH = 58;
     let boxX = mouseX - boxW - 10;
     let boxY = mouseY - 24;
     // Keep box inside canvas
@@ -396,6 +432,8 @@ function drawScatterplot(xIndex, yIndex) {
     fill(80);
     textSize(11);
     text(line2, boxX + 10, boxY + 24);
+    fill(140, 40, 80);
+    text(line3, boxX + 10, boxY + 38);
   }
 
   // ── Zoom out instruction ───────────────────────────────────────────────
@@ -430,14 +468,18 @@ function articleHotspotRadius(h, xIndex, yIndex, cx, cy, currentXRange, currentY
 
 // ── Article hotspot rendering ────────────────────────────────────────────
 function drawArticleHotspots(xIndex, yIndex, currentXRange, currentYRange) {
-  let xKey = pcaMode === 'base' ? 'baseX' : 'instructX';
-  let yKey = pcaMode === 'base' ? 'baseY' : 'instructY';
+  let xKey, yKey;
+  if (pcaMode === 'base') { xKey = 'baseX'; yKey = 'baseY'; }
+  else if (pcaMode === 'instruct') { xKey = 'instructX'; yKey = 'instructY'; }
+  else { xKey = 'bertX'; yKey = 'bertY'; }
 
-  // Only render hotspots when axes match the current PCA mode
+  // Only render hotspots when axes match the current layout mode
   let xName = allDimNames[xIndex];
   let yName = allDimNames[yIndex];
-  let expectedX = pcaMode === 'base' ? 'base_pca1' : 'instruct_pca1';
-  let expectedY = pcaMode === 'base' ? 'base_pca2' : 'instruct_pca2';
+  let expectedX, expectedY;
+  if (pcaMode === 'base') { expectedX = 'base_pca1'; expectedY = 'base_pca2'; }
+  else if (pcaMode === 'instruct') { expectedX = 'instruct_pca1'; expectedY = 'instruct_pca2'; }
+  else { expectedX = 'bert_umap1'; expectedY = 'bert_umap2'; }
   if (xName !== expectedX || yName !== expectedY) return;
 
   for (let h of articleHotspots) {
@@ -509,6 +551,27 @@ function drawLegend() {
     text('Instruct >', lx + 80, ly + 13);
     textAlign(CENTER, TOP);
     text('Influence Diff', lx + 40, ly + 24);
+  } else if (selectedScoring === 'Base Hub Score' || selectedScoring === 'Instruct Hub Score') {
+    noStroke();
+    for (let i = 0; i < 80; i++) {
+      let t = i / 79;
+      let c;
+      if (t < 0.5) {
+        c = lerpColor(color(80, 80, 80), color(240, 240, 240), t * 2);
+      } else {
+        c = lerpColor(color(240, 240, 240), color(255, 20, 100), (t - 0.5) * 2);
+      }
+      fill(c);
+      rect(lx + i, ly, 1, 10);
+    }
+    fill(0);
+    textSize(9);
+    textAlign(LEFT, TOP);
+    text('Sink', lx, ly + 13);
+    textAlign(RIGHT, TOP);
+    text('Hub', lx + 80, ly + 13);
+    textAlign(CENTER, TOP);
+    text(selectedScoring, lx + 40, ly + 24);
   } else if (selectedScoring === 'Section Level') {
     let levels = [0, 2, 3, 4];
     let labels = ['Intro', 'H2', 'H3', 'H4'];
@@ -546,11 +609,15 @@ function mousePressed() {
     let yIndex = allDimNames.indexOf(yName);
     let currentXRange = originalXRange;
     let currentYRange = originalYRange;
-    let xKey = pcaMode === 'base' ? 'baseX' : 'instructX';
-    let yKey = pcaMode === 'base' ? 'baseY' : 'instructY';
+    let xKey, yKey;
+    if (pcaMode === 'base') { xKey = 'baseX'; yKey = 'baseY'; }
+    else if (pcaMode === 'instruct') { xKey = 'instructX'; yKey = 'instructY'; }
+    else { xKey = 'bertX'; yKey = 'bertY'; }
 
-    let expectedX = pcaMode === 'base' ? 'base_pca1' : 'instruct_pca1';
-    let expectedY = pcaMode === 'base' ? 'base_pca2' : 'instruct_pca2';
+    let expectedX, expectedY;
+    if (pcaMode === 'base') { expectedX = 'base_pca1'; expectedY = 'base_pca2'; }
+    else if (pcaMode === 'instruct') { expectedX = 'instruct_pca1'; expectedY = 'instruct_pca2'; }
+    else { expectedX = 'bert_umap1'; expectedY = 'bert_umap2'; }
     if (xName !== expectedX || yName !== expectedY) return;
 
     for (let h of articleHotspots) {
@@ -597,11 +664,15 @@ function zoomOut() {
 // ── DataTable ────────────────────────────────────────────────────────────
 function populateDataTable() {
   // Columns to display
+  // Include bert_umap columns if present in the CSV
+  let allCols = table.columns;
   let colNames = [
     'id', 'article_title', 'section_path', 'heading', 'question',
     'base_pca1', 'base_pca2', 'instruct_pca1', 'instruct_pca2',
+    ...(allCols.includes('bert_umap1') ? ['bert_umap1', 'bert_umap2'] : []),
     'base_total_influence', 'instruct_total_influence', 'influence_diff',
-    'base_top_k_count', 'instruct_top_k_count', 'level',
+    'base_top_k_count', 'instruct_top_k_count',
+    'base_hub_score', 'instruct_hub_score', 'level',
   ];
 
   let headers = colNames.slice();
@@ -612,6 +683,7 @@ function populateDataTable() {
       let val = table.getString(r, c);
       // Format floats to 3 decimal places
       if (['base_pca1','base_pca2','instruct_pca1','instruct_pca2',
+           'bert_umap1','bert_umap2',
            'base_total_influence','instruct_total_influence','influence_diff'].includes(c)) {
         let f = parseFloat(val);
         return isNaN(f) ? val : f.toFixed(3);
