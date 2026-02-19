@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <link rel="stylesheet" type="text/css" href="styles.css"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.2/p5.min.js"></script>
-  <script src="sketch.js?v=9"></script>
+  <script src="sketch.js?v=10"></script>
   <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css"/>
   <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css"/>
   <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/select/1.7.0/css/select.dataTables.min.css"/>
@@ -34,5 +34,34 @@
       </div>
     </div>
   </div>
+
+  <!-- Wikipedia link popup -->
+  <div id="wiki-popup" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+       background:rgba(0,0,0,0.4); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:24px 32px; max-width:500px; box-shadow:0 4px 24px rgba(0,0,0,0.3);">
+      <div id="wiki-popup-title" style="font-size:16px; font-weight:bold; margin-bottom:8px;"></div>
+      <div id="wiki-popup-section" style="font-size:13px; color:#666; margin-bottom:16px;"></div>
+      <a id="wiki-popup-link" href="#" target="_blank"
+         style="display:inline-block; padding:8px 20px; background:#1a73e8; color:#fff;
+                border-radius:4px; text-decoration:none; font-size:14px;">
+        Open on Wikipedia
+      </a>
+      <button id="wiki-popup-close"
+              style="margin-left:12px; padding:8px 16px; background:#eee; border:1px solid #ccc;
+                     border-radius:4px; cursor:pointer; font-size:14px;">
+        Close
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // Close popup on button click or background click
+    document.getElementById('wiki-popup-close').addEventListener('click', function() {
+      document.getElementById('wiki-popup').style.display = 'none';
+    });
+    document.getElementById('wiki-popup').addEventListener('click', function(e) {
+      if (e.target === this) this.style.display = 'none';
+    });
+  </script>
 </body>
 </html>

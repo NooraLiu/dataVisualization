@@ -133,6 +133,8 @@ function setup() {
   // ── Scoring / color mode selector ──────────────────────────────────────
   scoringSelect = createSelect();
   scoringSelect.option('Article Groups');
+  scoringSelect.option('Groups + Base Influence');
+  scoringSelect.option('Groups + Instruct Influence');
   scoringSelect.option('Base Influence');
   scoringSelect.option('Instruct Influence');
   scoringSelect.option('Influence Diff');
@@ -263,6 +265,13 @@ function levelColor(lvl) {
   return color(c[0], c[1], c[2]);
 }
 
+// ── Does current scoring mode show article group hotspots? ───────────────
+function showsArticleGroups() {
+  return selectedScoring === 'Article Groups' ||
+         selectedScoring === 'Groups + Base Influence' ||
+         selectedScoring === 'Groups + Instruct Influence';
+}
+
 // ── point color based on scoring mode ────────────────────────────────────
 function pointColor(p) {
   switch (selectedScoring) {
@@ -309,6 +318,14 @@ function pointColor(p) {
     }
     case 'Section Level':
       return levelColor(p.level);
+    case 'Groups + Base Influence': {
+      let v = constrain(p.normBase, 0, 1);
+      return lerpColor(color(200, 240, 200), color(220, 20, 20), v);
+    }
+    case 'Groups + Instruct Influence': {
+      let v = constrain(p.normInstruct, 0, 1);
+      return lerpColor(color(200, 210, 240), color(20, 20, 180), v);
+    }
     default: // 'Article Groups' or anything else
       return color(70, 130, 180); // steelblue
   }
@@ -359,7 +376,7 @@ function drawScatterplot(xIndex, yIndex) {
   }
 
   // ── Article group hotspots (draw behind points) ────────────────────────
-  if (selectedScoring === 'Article Groups' && !isZoomed) {
+  if (showsArticleGroups() && !isZoomed) {
     drawArticleHotspots(xIndex, yIndex, currentXRange, currentYRange);
   }
 
@@ -512,8 +529,9 @@ function drawLegend() {
   let lx = scatterplotX + scatterplotSize - 160;
   let ly = scatterplotY + 10;
 
-  if (selectedScoring === 'Base Influence' || selectedScoring === 'Instruct Influence') {
-    let isBase = selectedScoring === 'Base Influence';
+  if (selectedScoring === 'Base Influence' || selectedScoring === 'Instruct Influence' ||
+      selectedScoring === 'Groups + Base Influence' || selectedScoring === 'Groups + Instruct Influence') {
+    let isBase = selectedScoring === 'Base Influence' || selectedScoring === 'Groups + Base Influence';
     let lowCol = isBase ? color(200, 240, 200) : color(200, 210, 240);
     let highCol = isBase ? color(220, 20, 20) : color(20, 20, 180);
 
@@ -602,7 +620,7 @@ function mousePressed() {
   }
 
   // Click on article hotspot to zoom
-  if (selectedScoring === 'Article Groups' && !isZoomed) {
+  if (showsArticleGroups() && !isZoomed) {
     let xName = xDimSelect.value();
     let yName = yDimSelect.value();
     let xIndex = allDimNames.indexOf(xName);
@@ -726,14 +744,41 @@ function populateDataTable() {
     buttons: ['colvis'],
     createdRow: function(row, data) {
       $(row).css('height', `${ROW_HEIGHT}px`);
+      $(row).css('cursor', 'pointer');
       $(row).on('mouseenter', function() {
         tableHoverId = String(data[0]);
       });
       $(row).on('mouseleave', function() {
         tableHoverId = null;
       });
+      $(row).on('click', function() {
+        // data indices: 0=id, 1=article_title, 2=section_path, 3=heading
+        showWikiPopup(data[1], data[2], data[3]);
+      });
     }
   });
+}
+
+// ── Wikipedia link popup ──────────────────────────────────────────────────
+function buildWikiUrl(articleTitle, heading) {
+  // Convert article title to Wikipedia URL format
+  let titleSlug = articleTitle.replace(/ /g, '_');
+  let anchor = '';
+  if (heading && heading !== 'Introduction') {
+    anchor = '#' + heading.replace(/ /g, '_');
+  }
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(titleSlug)}${anchor}`;
+}
+
+function showWikiPopup(articleTitle, sectionPath, heading) {
+  let url = buildWikiUrl(articleTitle, heading);
+  let popup = document.getElementById('wiki-popup');
+  document.getElementById('wiki-popup-title').textContent = articleTitle;
+  document.getElementById('wiki-popup-section').textContent = sectionPath || heading;
+  let link = document.getElementById('wiki-popup-link');
+  link.href = url;
+  link.textContent = `Open: ${articleTitle} > ${heading}`;
+  popup.style.display = 'flex';
 }
 
 // ── Locate row by ID ─────────────────────────────────────────────────────
