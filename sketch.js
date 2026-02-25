@@ -6,7 +6,7 @@ let articleHotspots = [];
 let hoverIndex = -1;
 
 // UI elements
-let xDimSelect, yDimSelect, scoringSelect, pcaToggle;
+let xDimSelect, yDimSelect, scoringSelect, pcaToggle, viewModeSelect;
 let allDimNames = [];
 let scatterplotX = 60;
 let scatterplotY = 60;
@@ -24,6 +24,10 @@ let zoomedYRange  = { min: 0, max: 1 };
 
 // Current PCA mode: 'base' or 'instruct'
 let pcaMode = 'base';
+
+// View mode: 'sections' or 'articles'
+let viewMode = 'sections';
+let zoomedFromArticles = false;  // Track if zoom came from articles view
 
 // Scoring / color modes
 let selectedScoring = 'Article Groups';
@@ -105,6 +109,9 @@ function setup() {
     });
   }
 
+  // ── Build article-level aggregated points ────────────────────────────────
+  buildArticlePoints();
+
   // ── X / Y dimension selectors ──────────────────────────────────────────
   xDimSelect = createSelect();
   yDimSelect = createSelect();
@@ -147,6 +154,20 @@ function setup() {
   scoringSelect.style('z-index', '1001');
   scoringSelect.changed(() => { selectedScoring = scoringSelect.value(); });
 
+  // ── View mode toggle (Sections vs Articles) ───────────────────────────
+  viewModeSelect = createSelect();
+  viewModeSelect.option('Sections');
+  viewModeSelect.option('Articles');
+  viewModeSelect.selected('Sections');
+  viewModeSelect.position(440, 150);
+  viewModeSelect.style('position', 'fixed');
+  viewModeSelect.style('z-index', '1001');
+  viewModeSelect.changed(() => {
+    viewMode = viewModeSelect.value().toLowerCase();
+    isZoomed = false;
+    zoomedHotspot = null;
+  });
+
   // DataTable
   populateDataTable();
 }
@@ -186,8 +207,8 @@ function draw() {
 
   detectHover(xIndex, yIndex);
 
-  // Table row sync
-  if (hoverIndex !== -1) {
+  // Table row sync (only in sections view)
+  if (hoverIndex !== -1 && viewMode === 'sections') {
     let hoveredId = points[hoverIndex].id;
     if (hoveredId !== lastHoveredId) {
       locateRowById(hoveredId);
@@ -202,9 +223,15 @@ function draw() {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
+function activePoints() {
+  return viewMode === 'articles' ? articlePoints : points;
+}
+
 function updateDataRanges(xIndex, yIndex) {
-  let xVals = points.map(p => p.dims[xIndex]);
-  let yVals = points.map(p => p.dims[yIndex]);
+  // Use the active point set for range calculation so articles view isn't squished
+  let pts = activePoints();
+  let xVals = pts.map(p => p.dims[xIndex]);
+  let yVals = pts.map(p => p.dims[yIndex]);
   originalXRange.min = min(xVals);
   originalXRange.max = max(xVals);
   originalYRange.min = min(yVals);
@@ -215,9 +242,11 @@ function detectHover(xIndex, yIndex) {
   hoverIndex = -1;
   let currentXRange = isZoomed ? zoomedXRange : originalXRange;
   let currentYRange = isZoomed ? zoomedYRange : originalYRange;
+  let pts = activePoints();
+  let hoverRadius = viewMode === 'articles' ? 12 : 6;
 
-  for (let i = 0; i < points.length; i++) {
-    let p = points[i];
+  for (let i = 0; i < pts.length; i++) {
+    let p = pts[i];
     if (isZoomed) {
       if (p.dims[xIndex] < currentXRange.min || p.dims[xIndex] > currentXRange.max ||
           p.dims[yIndex] < currentYRange.min || p.dims[yIndex] > currentYRange.max) continue;
@@ -226,7 +255,7 @@ function detectHover(xIndex, yIndex) {
                 scatterplotX, scatterplotX + scatterplotSize);
     let y = map(p.dims[yIndex], currentYRange.min, currentYRange.max,
                 scatterplotY + scatterplotSize, scatterplotY);
-    if (dist(mouseX, mouseY, x, y) < 6) {
+    if (dist(mouseX, mouseY, x, y) < hoverRadius) {
       hoverIndex = i;
       break;
     }
@@ -243,6 +272,64 @@ function populateDimensionDropdowns() {
   }
 }
 
+// ── Build article-level aggregated points ────────────────────────────────
+let articlePoints = [];
+function buildArticlePoints() {
+  // Group sections by articleId
+  let byArticle = {};
+  for (let p of points) {
+    if (!byArticle[p.articleId]) byArticle[p.articleId] = [];
+    byArticle[p.articleId].push(p);
+  }
+
+  articlePoints = [];
+  for (let aid of Object.keys(byArticle)) {
+    let secs = byArticle[aid];
+    let n = secs.length;
+
+    // For spatial dims (pca, umap): average to get centroid
+    // For metric dims (influence, hub): sum to get article-level aggregate
+    let sumDims = new Array(allDimNames.length).fill(0);
+    for (let s of secs) {
+      for (let d = 0; d < s.dims.length; d++) {
+        sumDims[d] += s.dims[d];
+      }
+    }
+    let spatialDims = ['base_pca1','base_pca2','instruct_pca1','instruct_pca2','bert_umap1','bert_umap2'];
+    let avgDims = sumDims.map((v, d) => spatialDims.includes(allDimNames[d]) ? v / n : v);
+
+    // Aggregate influence metrics (sum across sections)
+    let baseInf = secs.reduce((s, p) => s + p.baseInfluence, 0);
+    let instrInf = secs.reduce((s, p) => s + p.instructInfluence, 0);
+    let baseHub = secs.reduce((s, p) => s + p.baseHubScore, 0);
+    let instrHub = secs.reduce((s, p) => s + p.instructHubScore, 0);
+    let infDiff = instrInf - baseInf;
+
+    articlePoints.push({
+      articleId:         aid,
+      articleTitle:      secs[0].articleTitle,
+      sectionCount:      n,
+      dims:              avgDims,
+      baseInfluence:     baseInf,
+      instructInfluence: instrInf,
+      normBase:          0,  // normalized below
+      normInstruct:      0,
+      influenceDiff:     infDiff,
+      baseHubScore:      baseHub,
+      instructHubScore:  instrHub,
+      level:             0,
+    });
+  }
+
+  // Normalize influence to [0, 1]
+  let maxBase = Math.max(...articlePoints.map(a => a.baseInfluence), 1e-8);
+  let maxInstr = Math.max(...articlePoints.map(a => a.instructInfluence), 1e-8);
+  for (let a of articlePoints) {
+    a.normBase = a.baseInfluence / maxBase;
+    a.normInstruct = a.instructInfluence / maxInstr;
+  }
+}
+
 // ── draw labels ──────────────────────────────────────────────────────────
 function drawLabels() {
   fill(0);
@@ -251,6 +338,7 @@ function drawLabels() {
   let layoutLabel = pcaToggle.value();
   if (layoutLabel === 'BERT Embeddings') layoutLabel += ' (bge-large-en-v1.5 UMAP)';
   text(`Layout: ${layoutLabel}`, 440, 70);
+  text(`View:`, 400, 152);
 }
 
 // ── Level colors ─────────────────────────────────────────────────────────
@@ -375,12 +463,71 @@ function drawScatterplot(xIndex, yIndex) {
     text(yValue, scatterplotX - 8, yTick);
   }
 
-  // ── Article group hotspots (draw behind points) ────────────────────────
-  if (showsArticleGroups() && !isZoomed) {
+  // ── Article group hotspots (draw behind points, sections view only) ────
+  if (viewMode === 'sections' && showsArticleGroups() && !isZoomed) {
     drawArticleHotspots(xIndex, yIndex, currentXRange, currentYRange);
   }
 
   // ── Points ─────────────────────────────────────────────────────────────
+  if (viewMode === 'articles') {
+    drawArticleView(xIndex, yIndex, currentXRange, currentYRange);
+  } else {
+    drawSectionView(xIndex, yIndex, currentXRange, currentYRange);
+  }
+
+  // ── Hover box ──────────────────────────────────────────────────────────
+  if (hoverIndex !== -1) {
+    let pts = activePoints();
+    let p = pts[hoverIndex];
+    strokeWeight(1);
+    stroke(0);
+    fill(255);
+
+    let hoverLines;
+    if (viewMode === 'articles') {
+      hoverLines = [
+        p.articleTitle + ` (${p.sectionCount} sections)`,
+        `Base influence: ${p.baseInfluence.toFixed(2)}  |  Instruct: ${p.instructInfluence.toFixed(2)}`,
+        `Hub: ${p.baseHubScore.toFixed(0)} (base)  |  ${p.instructHubScore.toFixed(0)} (instruct)`,
+      ];
+    } else {
+      hoverLines = [
+        `${p.articleTitle} > ${p.heading}`,
+        `Base: ${p.baseInfluence.toFixed(3)}  |  Instruct: ${p.instructInfluence.toFixed(3)}`,
+        `Hub: ${p.baseHubScore.toFixed(0)} (base)  |  ${p.instructHubScore.toFixed(0)} (instruct)`,
+      ];
+    }
+
+    let boxW = max(...hoverLines.map(l => textWidth(l))) + 24;
+    let boxH = 14 + hoverLines.length * 16;
+    let boxX = mouseX - boxW - 10;
+    let boxY = mouseY - 24;
+    if (boxX < 4) boxX = mouseX + 10;
+    if (boxY < 4) boxY = 4;
+    rect(boxX, boxY, boxW, boxH, 4);
+    noStroke();
+    textAlign(LEFT, TOP);
+    for (let li = 0; li < hoverLines.length; li++) {
+      fill(li === 0 ? 0 : li === 1 ? 80 : color(140, 40, 80));
+      textSize(li === 0 ? 12 : 11);
+      text(hoverLines[li], boxX + 10, boxY + 6 + li * 16);
+    }
+  }
+
+  // ── Zoom out instruction ───────────────────────────────────────────────
+  if (isZoomed) {
+    fill(100);
+    textSize(12);
+    textAlign(LEFT, TOP);
+    text("Click outside the plot area to zoom out", scatterplotX, scatterplotY - 20);
+  }
+
+  // ── Legend for color modes ─────────────────────────────────────────────
+  drawLegend();
+}
+
+// ── Section-level point drawing (original behavior) ─────────────────────
+function drawSectionView(xIndex, yIndex, currentXRange, currentYRange) {
   for (let i = 0; i < points.length; i++) {
     let p = points[i];
     if (isZoomed) {
@@ -423,46 +570,49 @@ function drawScatterplot(xIndex, yIndex) {
     fill(col);
     ellipse(x, y, POINT_SIZE, POINT_SIZE);
   }
+}
 
-  // ── Hover box ──────────────────────────────────────────────────────────
-  if (hoverIndex !== -1) {
-    let p = points[hoverIndex];
-    strokeWeight(1);
-    stroke(0);
-    fill(255);
-    let line1 = `${p.articleTitle} > ${p.heading}`;
-    let line2 = `Base: ${p.baseInfluence.toFixed(3)}  |  Instruct: ${p.instructInfluence.toFixed(3)}`;
-    let line3 = `Hub: ${p.baseHubScore.toFixed(0)} (base)  |  ${p.instructHubScore.toFixed(0)} (instruct)`;
-    let boxW = max(textWidth(line1), textWidth(line2), textWidth(line3)) + 24;
-    let boxH = 58;
-    let boxX = mouseX - boxW - 10;
-    let boxY = mouseY - 24;
-    // Keep box inside canvas
-    if (boxX < 4) boxX = mouseX + 10;
-    if (boxY < 4) boxY = 4;
-    rect(boxX, boxY, boxW, boxH, 4);
+// ── Article-level aggregated dot drawing ─────────────────────────────────
+function drawArticleView(xIndex, yIndex, currentXRange, currentYRange) {
+  // Dot size: proportional to sqrt(sectionCount), scaled for visibility
+  let maxSections = Math.max(...articlePoints.map(a => a.sectionCount));
+  let MIN_DOT = 10;
+  let MAX_DOT = 40;
+
+  for (let i = 0; i < articlePoints.length; i++) {
+    let a = articlePoints[i];
+    let x = map(a.dims[xIndex], currentXRange.min, currentXRange.max,
+                scatterplotX, scatterplotX + scatterplotSize);
+    let y = map(a.dims[yIndex], currentYRange.min, currentYRange.max,
+                scatterplotY + scatterplotSize, scatterplotY);
+
+    let dotSize = map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), MIN_DOT, MAX_DOT);
+    let col = pointColor(a);
+
+    // Hover highlight
+    if (hoverIndex === i) {
+      noFill();
+      stroke(255, 165, 0);
+      strokeWeight(2.5);
+      ellipse(x, y, dotSize + 8, dotSize + 8);
+    }
+
+    // Main dot — semi-transparent fill with solid outline
+    fill(red(col), green(col), blue(col), 180);
+    stroke(red(col), green(col), blue(col));
+    strokeWeight(1.5);
+    ellipse(x, y, dotSize, dotSize);
+
+    // Label inside/below the dot
     noStroke();
     fill(0);
-    textAlign(LEFT, TOP);
-    textSize(12);
-    text(line1, boxX + 10, boxY + 6);
-    fill(80);
-    textSize(11);
-    text(line2, boxX + 10, boxY + 24);
-    fill(140, 40, 80);
-    text(line3, boxX + 10, boxY + 38);
+    textAlign(CENTER, CENTER);
+    textSize(8);
+    let lbl = a.articleTitle.length > 16 ? a.articleTitle.substring(0, 15) + '\u2026' : a.articleTitle;
+    text(lbl, x, y + dotSize / 2 + 8);
   }
 
-  // ── Zoom out instruction ───────────────────────────────────────────────
-  if (isZoomed) {
-    fill(100);
-    textSize(12);
-    textAlign(LEFT, TOP);
-    text("Click outside the plot area to zoom out", scatterplotX, scatterplotY - 20);
-  }
-
-  // ── Legend for color modes ─────────────────────────────────────────────
-  drawLegend();
+  textAlign(LEFT, TOP);
 }
 
 // ── Hotspot radius: use 75th-percentile of section distances, capped ─────
@@ -619,8 +769,35 @@ function mousePressed() {
     return;
   }
 
-  // Click on article hotspot to zoom
-  if (showsArticleGroups() && !isZoomed) {
+  // Click on article dot (articles view) — zoom into sections
+  if (viewMode === 'articles' && !isZoomed) {
+    let xIndex = allDimNames.indexOf(xDimSelect.value());
+    let yIndex = allDimNames.indexOf(yDimSelect.value());
+    let maxSections = Math.max(...articlePoints.map(a => a.sectionCount));
+
+    for (let i = 0; i < articlePoints.length; i++) {
+      let a = articlePoints[i];
+      let ax = map(a.dims[xIndex], originalXRange.min, originalXRange.max,
+                   scatterplotX, scatterplotX + scatterplotSize);
+      let ay = map(a.dims[yIndex], originalYRange.min, originalYRange.max,
+                   scatterplotY + scatterplotSize, scatterplotY);
+      let dotSize = map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), 10, 40);
+
+      if (dist(mouseX, mouseY, ax, ay) <= dotSize / 2 + 4) {
+        // Switch to sections view zoomed into this article
+        zoomedFromArticles = true;
+        viewMode = 'sections';
+        viewModeSelect.selected('Sections');
+        let fakeHotspot = { articleId: a.articleId, label: a.articleTitle };
+        zoomIntoArticle(fakeHotspot, xIndex, yIndex);
+        return;
+      }
+    }
+    return;
+  }
+
+  // Click on article hotspot to zoom (sections view)
+  if (viewMode === 'sections' && showsArticleGroups() && !isZoomed) {
     let xName = xDimSelect.value();
     let yName = yDimSelect.value();
     let xIndex = allDimNames.indexOf(xName);
@@ -676,6 +853,12 @@ function zoomIntoArticle(hotspot, xIndex, yIndex) {
 function zoomOut() {
   isZoomed = false;
   zoomedHotspot = null;
+  // Return to articles view if zoom came from there
+  if (zoomedFromArticles) {
+    viewMode = 'articles';
+    viewModeSelect.selected('Articles');
+    zoomedFromArticles = false;
+  }
   console.log("Zoomed out to original view");
 }
 
