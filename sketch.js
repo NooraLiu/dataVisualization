@@ -121,6 +121,8 @@ function setup() {
   yDimSelect.style('position', 'fixed');
   xDimSelect.style('z-index', '1001');
   yDimSelect.style('z-index', '1001');
+  xDimSelect.style('width', '110px');
+  yDimSelect.style('width', '110px');
 
   populateDimensionDropdowns();
   xDimSelect.selected('base_pca1');
@@ -132,9 +134,10 @@ function setup() {
   pcaToggle.option('Instruct Model');
   pcaToggle.option('BERT Embeddings');
   pcaToggle.selected('Base Model');
-  pcaToggle.position(440, 80);
+  pcaToggle.position(670, 80);
   pcaToggle.style('position', 'fixed');
   pcaToggle.style('z-index', '1001');
+  pcaToggle.style('width', '150px');
   pcaToggle.changed(handlePCAToggle);
 
   // ── Scoring / color mode selector ──────────────────────────────────────
@@ -149,9 +152,10 @@ function setup() {
   scoringSelect.option('Instruct Hub Score');
   scoringSelect.option('Section Level');
   scoringSelect.selected('Article Groups');
-  scoringSelect.position(440, 115);
+  scoringSelect.position(670, 115);
   scoringSelect.style('position', 'fixed');
   scoringSelect.style('z-index', '1001');
+  scoringSelect.style('width', '150px');
   scoringSelect.changed(() => { selectedScoring = scoringSelect.value(); });
 
   // ── View mode toggle (Sections vs Articles) ───────────────────────────
@@ -159,9 +163,10 @@ function setup() {
   viewModeSelect.option('Sections');
   viewModeSelect.option('Articles');
   viewModeSelect.selected('Sections');
-  viewModeSelect.position(440, 150);
+  viewModeSelect.position(670, 150);
   viewModeSelect.style('position', 'fixed');
   viewModeSelect.style('z-index', '1001');
+  viewModeSelect.style('width', '150px');
   viewModeSelect.changed(() => {
     viewMode = viewModeSelect.value().toLowerCase();
     isZoomed = false;
@@ -333,12 +338,10 @@ function buildArticlePoints() {
 // ── draw labels ──────────────────────────────────────────────────────────
 function drawLabels() {
   fill(0);
-  textAlign(LEFT, CENTER);
+  textAlign(RIGHT, CENTER);
   textSize(12);
-  let layoutLabel = pcaToggle.value();
-  if (layoutLabel === 'BERT Embeddings') layoutLabel += ' (bge-large-en-v1.5 UMAP)';
-  text(`Layout: ${layoutLabel}`, 440, 70);
-  text(`View:`, 400, 152);
+  text('Layout:', 645, 15);
+  text('View:', 645, 85);
 }
 
 // ── Level colors ─────────────────────────────────────────────────────────
@@ -426,8 +429,8 @@ function drawScatterplot(xIndex, yIndex) {
 
   let titleSuffix = isZoomed ? ' (ZOOMED)' : '';
   let title = `${allDimNames[xIndex]} vs ${allDimNames[yIndex]}${titleSuffix}`;
-  textAlign(LEFT, TOP);
-  text(title, scatterplotX + 40, scatterplotY - 40);
+  textAlign(CENTER, TOP);
+  text(title, scatterplotX + scatterplotSize / 2, scatterplotY - 40);
 
   let currentXRange = isZoomed ? zoomedXRange : originalXRange;
   let currentYRange = isZoomed ? zoomedYRange : originalYRange;
