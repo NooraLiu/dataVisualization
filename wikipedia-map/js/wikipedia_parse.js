@@ -86,6 +86,150 @@ function getSubPages(pageName) {
 }
 
 /**
+ * Sections to exclude from the table of contents
+ */
+const EXCLUDED_SECTIONS = [
+  'see also',
+  'notes',
+  'references',
+  'external links',
+  'further reading',
+  'bibliography',
+  'sources',
+  'citations',
+];
+
+/**
+ * Get all section names from the Table of Contents of a Wikipedia page.
+ * Returns a hierarchical structure where each section has its children.
+ * Excludes standard footer sections like "See also", "References", etc.
+ * @param {string} pageName - The name of the Wikipedia page
+ * @returns {Promise<{redirectedTo: string, sections: Array<{name: string, children: string[]}>}>}
+ */
+function getPageSections(pageName) {
+  return queryApi({
+    action: 'parse',
+    page: pageName,
+    prop: 'sections',
+    redirects: 1,
+  }).then(res => {
+    const redirectedTo = res.parse.redirects && res.parse.redirects[0]
+      ? res.parse.redirects[0].to
+      : pageName;
+    
+    // Build hierarchical structure
+    const topLevelSections = [];
+    let currentTopLevel = null;
+    let excludeCurrentSection = false;
+    
+    for (const section of res.parse.sections) {
+      const sectionName = section.line.replace(/<[^>]*>/g, ''); // Strip HTML tags
+      const sectionNameLower = sectionName.toLowerCase();
+      const level = parseInt(section.toclevel, 10);
+      
+      // Check if this is a top-level section (level 1)
+      if (level === 1) {
+        // Check if this section should be excluded
+        if (EXCLUDED_SECTIONS.includes(sectionNameLower)) {
+          excludeCurrentSection = true;
+          currentTopLevel = null;
+          continue;
+        }
+        
+        excludeCurrentSection = false;
+        currentTopLevel = { name: sectionName, children: [] };
+        topLevelSections.push(currentTopLevel);
+      } else if (level === 2 && currentTopLevel && !excludeCurrentSection) {
+        // This is a subsection (level 2) - add as child of current top-level
+        if (!EXCLUDED_SECTIONS.includes(sectionNameLower)) {
+          currentTopLevel.children.push(sectionName);
+        }
+      }
+      // Ignore deeper levels (level 3+) for now
+    }
+    
+    return { redirectedTo, sections: topLevelSections };
+  });
+}
+
+/**
+ * Get the section index for a given section name in an article
+ * @param {string} pageName - The Wikipedia article name
+ * @param {string} sectionName - The section name to find
+ * @returns {Promise<number|null>} - The section index or null if not found
+ */
+function getSectionIndex(pageName, sectionName) {
+  return queryApi({
+    action: 'parse',
+    page: pageName,
+    prop: 'sections',
+    redirects: 1,
+  }).then(res => {
+    for (const section of res.parse.sections) {
+      const name = section.line.replace(/<[^>]*>/g, ''); // Strip HTML tags
+      if (name.toLowerCase() === sectionName.toLowerCase()) {
+        return parseInt(section.index, 10);
+      }
+    }
+    return null;
+  });
+}
+
+/**
+ * Get links from a specific section of a Wikipedia article
+ * Only returns links from the main content, excluding citations/references
+ * @param {string} pageName - The Wikipedia article name (e.g., "Cat")
+ * @param {string} sectionName - The section name (e.g., "Behavior")
+ * @param {number} limit - Maximum number of links to return (default 10)
+ * @returns {Promise<{links: string[]}>}
+ */
+function getSectionLinks(pageName, sectionName, limit = 10) {
+  return getSectionIndex(pageName, sectionName).then(sectionIndex => {
+    if (sectionIndex === null) {
+      console.log(`Section "${sectionName}" not found in "${pageName}"`);
+      return { links: [] };
+    }
+    
+    return queryApi({
+      action: 'parse',
+      page: pageName,
+      prop: 'text',
+      section: sectionIndex,
+      redirects: 1,
+    }).then(res => {
+      const doc = domParser.parseFromString(res.parse.text['*'], 'text/html');
+      
+      // Remove citation elements before extracting links
+      // This includes <sup> tags (footnote markers), .reference, .citation, etc.
+      const elementsToRemove = doc.querySelectorAll('sup, .reference, .citation, .mw-editsection, .noprint, .mw-cite-backlink');
+      elementsToRemove.forEach(el => el.remove());
+      
+      // Get links only from paragraph tags (main content)
+      const paragraphs = doc.querySelectorAll('p');
+      const allLinks = [];
+      
+      paragraphs.forEach(p => {
+        const links = Array.from(p.querySelectorAll('a'))
+          .map(link => link.getAttribute('href'))
+          .filter(href => href && href.startsWith('/wiki/'))
+          .filter(href => !href.includes('#')) // Exclude anchor links within the same page
+          .map(getPageTitleQuickly)
+          .filter(isArticle)
+          .map(title => title.replace(/_/g, ' '));
+        allLinks.push(...links);
+      });
+      
+      // Remove duplicates
+      const ids = allLinks.map(getNormalizedId);
+      const uniqueLinks = allLinks.filter((n, i) => ids.indexOf(ids[i]) === i);
+      
+      // Return first N links
+      return { links: uniqueLinks.slice(0, limit) };
+    });
+  });
+}
+
+/**
  * Get the name of a random Wikipedia article
  */
 function getRandomArticle() {

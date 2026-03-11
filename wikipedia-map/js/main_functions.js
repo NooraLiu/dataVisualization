@@ -1,4 +1,4 @@
-/* global nodes, edges, getSpawnPosition, getNormalizedId, wordwrap, unwrap, getColor, getEdgeColor, getEdgeConnecting, getSubPages, colorNodes, edgesWidth */ // eslint-disable-line max-len
+/* global nodes, edges, getSpawnPosition, getNormalizedId, wordwrap, unwrap, getColor, getEdgeColor, getEdgeConnecting, getPageSections, getSectionLinks, colorNodes, edgesWidth */ // eslint-disable-line max-len
 // This script contains the big functions that implement a lot of the core
 // functionality, like expanding nodes, and getting the nodes for a traceback.
 
@@ -8,7 +8,14 @@ window.isReset = true;
 window.selectedNode = null;
 window.traceedges = [];
 window.tracenodes = [];
+window.expansionMode = 'C'; // Default mode: C (always sections)
 // ---------------------- //
+
+// Get the current expansion mode from the dropdown
+function getExpansionMode() {
+  const select = document.getElementById('mode-select');
+  return select ? select.value : 'C';
+}
 
 
 // Rename a node, possibly merging it with another node if another node has that ID
@@ -54,7 +61,7 @@ function renameNode(oldId, newName) {
   return newId;
 }
 
-// Callback to add to a node once data is recieved
+// Callback to add to a node once data is recieved (for flat list of strings)
 function expandNodeCallback(page, data) {
   const node = nodes.get(page); // The node that was clicked
   const level = node.level + 1; // Level for new nodes is one more than parent
@@ -99,13 +106,250 @@ function expandNodeCallback(page, data) {
   edges.add(newedges);
 }
 
-// Expand a node without freezing other stuff
+// Callback to add hierarchical sections to a node
+// sections is an array of {name: string, children: string[]}
+// nodeType: 'root' for main search node, 'section' for section nodes, 'link' for link nodes
+// includeChildren: whether to include subsections as child nodes (Mode A) or not (Mode B first click)
+function expandNodeWithSections(page, sections, nodeType = 'section', articleName = null, includeChildren = true) {
+  const node = nodes.get(page);
+  const level = node.level + 1;
+  const childLevel = level + 1;
+
+  const subnodes = [];
+  const newedges = [];
+  const [x, y] = getSpawnPosition(page);
+
+  for (const section of sections) {
+    const sectionID = getNormalizedId(section.name);
+    
+    // Add the top-level section node
+    if (!nodes.getIds().includes(sectionID)) {
+      subnodes.push({
+        id: sectionID,
+        label: wordwrap(decodeURIComponent(section.name), 15),
+        value: 1,
+        level,
+        color: getColor(level),
+        parent: page,
+        x,
+        y,
+        nodeType: 'primarySection', // Mark as primary section node
+        articleName: articleName || unwrap(node.label), // Track which article this section belongs to
+        hasChildren: section.children.length > 0,
+        childrenData: section.children, // Store children for later expansion in Mode B
+      });
+    }
+
+    // Add edge from parent to this section
+    if (!getEdgeConnecting(page, sectionID)) {
+      newedges.push({
+        from: page,
+        to: sectionID,
+        color: getEdgeColor(level),
+        level,
+        selectionWidth: 2,
+        hoverWidth: 0,
+      });
+    }
+
+    // Only add children if includeChildren is true (Mode A behavior)
+    if (includeChildren) {
+      for (const child of section.children) {
+        const childID = getNormalizedId(child);
+        
+        if (!nodes.getIds().includes(childID)) {
+          subnodes.push({
+            id: childID,
+            label: wordwrap(decodeURIComponent(child), 15),
+            value: 1,
+            level: childLevel,
+            color: getColor(childLevel),
+            parent: sectionID,
+            x,
+            y,
+            nodeType: 'secondarySection', // Subsections are secondary section nodes
+            articleName: articleName || unwrap(node.label),
+          });
+        }
+
+        if (!getEdgeConnecting(sectionID, childID)) {
+          newedges.push({
+            from: sectionID,
+            to: childID,
+            color: getEdgeColor(childLevel),
+            level: childLevel,
+            selectionWidth: 2,
+            hoverWidth: 0,
+          });
+        }
+      }
+    }
+  }
+
+  nodes.add(subnodes);
+  edges.add(newedges);
+}
+
+// Expand secondary sections from a primary section node (Mode B)
+function expandNodeWithSecondarySection(page, children, articleName) {
+  const node = nodes.get(page);
+  const level = node.level + 1;
+
+  const subnodes = [];
+  const newedges = [];
+  const [x, y] = getSpawnPosition(page);
+
+  for (const child of children) {
+    const childID = getNormalizedId(child);
+    
+    if (!nodes.getIds().includes(childID)) {
+      subnodes.push({
+        id: childID,
+        label: wordwrap(decodeURIComponent(child), 15),
+        value: 1,
+        level,
+        color: getColor(level),
+        parent: page,
+        x,
+        y,
+        nodeType: 'secondarySection',
+        articleName: articleName,
+      });
+    }
+
+    if (!getEdgeConnecting(page, childID)) {
+      newedges.push({
+        from: page,
+        to: childID,
+        color: getEdgeColor(level),
+        level,
+        selectionWidth: 2,
+        hoverWidth: 0,
+      });
+    }
+  }
+
+  nodes.add(subnodes);
+  edges.add(newedges);
+}
+
+// Callback to add link nodes from a section
+function expandNodeWithLinks(page, links, isLeaf = false) {
+  const node = nodes.get(page);
+  const level = node.level + 1;
+
+  const subnodes = [];
+  const newedges = [];
+  const [x, y] = getSpawnPosition(page);
+
+  for (const link of links) {
+    const linkID = getNormalizedId(link);
+    
+    if (!nodes.getIds().includes(linkID)) {
+      subnodes.push({
+        id: linkID,
+        label: wordwrap(decodeURIComponent(link), 15),
+        value: 1,
+        level,
+        color: getColor(level),
+        parent: page,
+        x,
+        y,
+        nodeType: 'link', // Mark as link node
+        isLeaf, // If true, this node cannot be expanded (Mode B)
+      });
+    }
+
+    if (!getEdgeConnecting(page, linkID)) {
+      newedges.push({
+        from: page,
+        to: linkID,
+        color: getEdgeColor(level),
+        level,
+        selectionWidth: 2,
+        hoverWidth: 0,
+      });
+    }
+  }
+
+  nodes.add(subnodes);
+  edges.add(newedges);
+}
+
+// Expand a node based on the current mode
 function expandNode(id) {
-  const pagename = unwrap(nodes.get(id).label);
-  getSubPages(pagename).then(({ redirectedTo, links }) => {
-    const newId = renameNode(id, redirectedTo);
-    expandNodeCallback(newId, links);
-  });
+  const node = nodes.get(id);
+  const pagename = unwrap(node.label);
+  const mode = getExpansionMode();
+  const nodeType = node.nodeType || 'root'; // 'root', 'primarySection', 'secondarySection', or 'link'
+  const isLeaf = node.isLeaf || false;
+  
+  // If this is a leaf node, don't expand
+  if (isLeaf) {
+    console.log('This node cannot be expanded (leaf node)');
+    return;
+  }
+
+  // Mode A: Sections (with subsections) ↔ Links
+  if (mode === 'A') {
+    if (nodeType === 'root' || nodeType === 'link') {
+      // Root node or link node → fetch sections with children
+      getPageSections(pagename).then(({ redirectedTo, sections }) => {
+        const newId = renameNode(id, redirectedTo);
+        expandNodeWithSections(newId, sections, nodeType, redirectedTo, true); // Include children
+      });
+    } else if (nodeType === 'primarySection' || nodeType === 'secondarySection') {
+      // Section node → fetch links from that section
+      const articleName = node.articleName;
+      getSectionLinks(articleName, pagename, 10).then(({ links }) => {
+        if (links.length > 0) {
+          expandNodeWithLinks(id, links, false);
+        } else {
+          console.log(`No links found in section "${pagename}" of "${articleName}"`);
+        }
+      });
+    }
+  }
+  // Mode B: Primary sections → Secondary sections → Links → Sections...
+  else if (mode === 'B') {
+    if (nodeType === 'root' || nodeType === 'link') {
+      // Root node or link node → fetch only primary sections (no children)
+      getPageSections(pagename).then(({ redirectedTo, sections }) => {
+        const newId = renameNode(id, redirectedTo);
+        expandNodeWithSections(newId, sections, nodeType, redirectedTo, false); // Don't include children
+      });
+    } else if (nodeType === 'primarySection') {
+      // Primary section → show secondary sections if available, otherwise show links
+      const hasChildren = node.hasChildren;
+      const childrenData = node.childrenData;
+      const articleName = node.articleName;
+      
+      if (hasChildren && childrenData && childrenData.length > 0) {
+        // Show secondary sections
+        expandNodeWithSecondarySection(id, childrenData, articleName);
+      } else {
+        // No children, show links directly
+        getSectionLinks(articleName, pagename, 10).then(({ links }) => {
+          if (links.length > 0) {
+            expandNodeWithLinks(id, links, false);
+          } else {
+            console.log(`No links found in section "${pagename}" of "${articleName}"`);
+          }
+        });
+      }
+    } else if (nodeType === 'secondarySection') {
+      // Secondary section → fetch links
+      const articleName = node.articleName;
+      getSectionLinks(articleName, pagename, 10).then(({ links }) => {
+        if (links.length > 0) {
+          expandNodeWithLinks(id, links, false);
+        } else {
+          console.log(`No links found in section "${pagename}" of "${articleName}"`);
+        }
+      });
+    }
+  }
+
   // Mark the expanded node as 'locked' if it's one of the commafield items
   const cf = document.getElementById('input');
   const cfItem = cf.querySelector(`.item[data-node-id="${id}"]`);
