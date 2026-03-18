@@ -1,4 +1,4 @@
-/* global vis, bindNetwork, getNormalizedId, wordwrap, getColor, noInputDetected, getItems, addItem, clearItems, unlockAll, fetchPageTitle, getRandomArticle, networkFromJson */ // eslint-disable-line max-len
+/* global vis, bindNetwork, getNormalizedId, wordwrap, getColor, getColorByNodeType, getShapeByNodeType, isShapeMode, getCurrentMode, noInputDetected, getItems, addItem, clearItems, unlockAll, fetchPageTitle, getRandomArticle, networkFromJson */ // eslint-disable-line max-len
 // This script contains the code that creates the central network, as well as
 // a function for resetting it to a brand new page.
 
@@ -54,16 +54,24 @@ function makeNetwork() {
 }
 
 // Get the object to represent a "start node" for a given page name
-const getStartNode = pageName => ({
-  id: getNormalizedId(pageName),
-  label: wordwrap(decodeURIComponent(pageName), 20),
-  value: 2,
-  level: 0,
-  color: getColor(0),
-  x: 0,
-  y: 0,
-  parent: getNormalizedId(pageName), // Parent is self
-});
+const getStartNode = pageName => {
+  const node = {
+    id: getNormalizedId(pageName),
+    label: wordwrap(decodeURIComponent(pageName), 20),
+    value: 2,
+    level: 0,
+    color: getColorByNodeType('root'),
+    x: 0,
+    y: 0,
+    parent: getNormalizedId(pageName), // Parent is self
+    nodeType: 'root', // Mark as root node
+  };
+  // Use shape for Mode A, keep dot for Mode B
+  if (isShapeMode()) {
+    node.shape = getShapeByNodeType('root');
+  }
+  return node;
+};
 
 // Reset everything to its initial state
 function clearNetwork() {

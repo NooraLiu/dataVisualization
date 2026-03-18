@@ -1,4 +1,4 @@
-/* global nodes, edges, getSpawnPosition, getNormalizedId, wordwrap, unwrap, getColor, getEdgeColor, getEdgeConnecting, getPageSections, getSectionLinks, colorNodes, edgesWidth */ // eslint-disable-line max-len
+/* global nodes, edges, getSpawnPosition, getNormalizedId, wordwrap, unwrap, getColor, getEdgeColor, getColorByNodeType, getEdgeColorByNodeType, getShapeByNodeType, isShapeMode, isSectionsLinksMode, getCurrentMode, getEdgeConnecting, getPageSections, getSectionLinks, colorNodes, edgesWidth */ // eslint-disable-line max-len
 // This script contains the big functions that implement a lot of the core
 // functionality, like expanding nodes, and getting the nodes for a traceback.
 
@@ -124,12 +124,12 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
     
     // Add the top-level section node
     if (!nodes.getIds().includes(sectionID)) {
-      subnodes.push({
+      const sectionNode = {
         id: sectionID,
         label: wordwrap(decodeURIComponent(section.name), 15),
         value: 1,
         level,
-        color: getColor(level),
+        color: getColorByNodeType('primarySection'),
         parent: page,
         x,
         y,
@@ -137,7 +137,12 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
         articleName: articleName || unwrap(node.label), // Track which article this section belongs to
         hasChildren: section.children.length > 0,
         childrenData: section.children, // Store children for later expansion in Mode B
-      });
+      };
+      // Add shape for Mode A
+      if (isShapeMode()) {
+        sectionNode.shape = getShapeByNodeType('primarySection');
+      }
+      subnodes.push(sectionNode);
     }
 
     // Add edge from parent to this section
@@ -145,7 +150,7 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
       newedges.push({
         from: page,
         to: sectionID,
-        color: getEdgeColor(level),
+        color: getEdgeColorByNodeType('primarySection'),
         level,
         selectionWidth: 2,
         hoverWidth: 0,
@@ -158,25 +163,30 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
         const childID = getNormalizedId(child);
         
         if (!nodes.getIds().includes(childID)) {
-          subnodes.push({
+          const childNode = {
             id: childID,
             label: wordwrap(decodeURIComponent(child), 15),
             value: 1,
             level: childLevel,
-            color: getColor(childLevel),
+            color: getColorByNodeType('secondarySection'),
             parent: sectionID,
             x,
             y,
             nodeType: 'secondarySection', // Subsections are secondary section nodes
             articleName: articleName || unwrap(node.label),
-          });
+          };
+          // Add shape for Mode A
+          if (isShapeMode()) {
+            childNode.shape = getShapeByNodeType('secondarySection');
+          }
+          subnodes.push(childNode);
         }
 
         if (!getEdgeConnecting(sectionID, childID)) {
           newedges.push({
             from: sectionID,
             to: childID,
-            color: getEdgeColor(childLevel),
+            color: getEdgeColorByNodeType('secondarySection'),
             level: childLevel,
             selectionWidth: 2,
             hoverWidth: 0,
@@ -203,25 +213,30 @@ function expandNodeWithSecondarySection(page, children, articleName) {
     const childID = getNormalizedId(child);
     
     if (!nodes.getIds().includes(childID)) {
-      subnodes.push({
+      const childNode = {
         id: childID,
         label: wordwrap(decodeURIComponent(child), 15),
         value: 1,
         level,
-        color: getColor(level),
+        color: getColorByNodeType('secondarySection'),
         parent: page,
         x,
         y,
         nodeType: 'secondarySection',
         articleName: articleName,
-      });
+      };
+      // Add shape for Mode A
+      if (isShapeMode()) {
+        childNode.shape = getShapeByNodeType('secondarySection');
+      }
+      subnodes.push(childNode);
     }
 
     if (!getEdgeConnecting(page, childID)) {
       newedges.push({
         from: page,
         to: childID,
-        color: getEdgeColor(level),
+        color: getEdgeColorByNodeType('secondarySection'),
         level,
         selectionWidth: 2,
         hoverWidth: 0,
@@ -246,25 +261,30 @@ function expandNodeWithLinks(page, links, isLeaf = false) {
     const linkID = getNormalizedId(link);
     
     if (!nodes.getIds().includes(linkID)) {
-      subnodes.push({
+      const linkNode = {
         id: linkID,
         label: wordwrap(decodeURIComponent(link), 15),
         value: 1,
         level,
-        color: getColor(level),
+        color: getColorByNodeType('link'),
         parent: page,
         x,
         y,
         nodeType: 'link', // Mark as link node
         isLeaf, // If true, this node cannot be expanded (Mode B)
-      });
+      };
+      // Add shape for Mode A
+      if (isShapeMode()) {
+        linkNode.shape = getShapeByNodeType('link');
+      }
+      subnodes.push(linkNode);
     }
 
     if (!getEdgeConnecting(page, linkID)) {
       newedges.push({
         from: page,
         to: linkID,
-        color: getEdgeColor(level),
+        color: getEdgeColorByNodeType('link'),
         level,
         selectionWidth: 2,
         hoverWidth: 0,
@@ -290,8 +310,9 @@ function expandNode(id) {
     return;
   }
 
-  // Mode A: Sections (with subsections) ↔ Links
-  if (mode === 'A') {
+  // Mode A & C: Sections (with subsections) ↔ Links
+  // Mode A uses shapes, Mode C uses distinct colors
+  if (mode === 'A' || mode === 'C') {
     if (nodeType === 'root' || nodeType === 'link') {
       // Root node or link node → fetch sections with children
       getPageSections(pagename).then(({ redirectedTo, sections }) => {

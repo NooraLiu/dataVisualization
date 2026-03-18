@@ -33,9 +33,69 @@ function lightenHex(hex, percent) {
   const newRgb = rgb.map(x => x + ((Math.min(percent, 100) / 100) * (255 - x)));
   return rgbToHex(newRgb); // and back to hex
 }
-// Get the color for a node, lighten a blue based on level. Subtle.
+
+// Color palette for node types (darkest to lightest) - Green theme (Mode B, user requested)
+// root (main article) -> primarySection -> secondarySection -> link
+const NODE_TYPE_COLORS = {
+  root: '#4B7A3E',           // Deeper green - main article
+  primarySection: '#A2CB8B', // Lighter green - primary sections
+  secondarySection: '#C7EABB', // Even lighter green - secondary sections
+  link: '#E8F5BD',           // Lightest green - links
+};
+
+// Multi-color palette for node types (Mode C) - user requested colors
+// root (main article) -> primarySection -> secondarySection -> link
+const NODE_TYPE_COLORS_MULTI = {
+  root: '#FE9EC7',           // Pink - main article
+  primarySection: '#F9F6C4', // Light yellow - primary sections
+  secondarySection: '#89D4FF', // Light blue - secondary sections
+  link: '#44ACFF',           // Blue - links
+};
+
+// Shape palette for node types (Mode A only)
+const NODE_TYPE_SHAPES = {
+  root: 'star',              // Star for main article
+  primarySection: 'diamond', // Diamond for primary sections
+  secondarySection: 'triangle', // Triangle for secondary sections
+  link: 'dot',               // Dot for links
+};
+
+// Get the current mode
+function getCurrentMode() {
+  const modeSelect = document.getElementById('mode-select');
+  return modeSelect ? modeSelect.value : 'A';
+}
+
+// Get the color for a node based on its type and current mode
+function getColorByNodeType(nodeType) {
+  const mode = getCurrentMode();
+  if (mode === 'C') {
+    return NODE_TYPE_COLORS_MULTI[nodeType] || NODE_TYPE_COLORS_MULTI.link;
+  }
+  return NODE_TYPE_COLORS[nodeType] || NODE_TYPE_COLORS.link;
+}
+
+// Get the shape for a node based on its type (Mode A only)
+function getShapeByNodeType(nodeType) {
+  return NODE_TYPE_SHAPES[nodeType] || NODE_TYPE_SHAPES.link;
+}
+
+// Check if current mode is A (shape mode)
+function isShapeMode() {
+  const modeSelect = document.getElementById('mode-select');
+  return modeSelect && modeSelect.value === 'A';
+}
+
+// Check if current mode uses sections ↔ links pattern (Mode A or C)
+function isSectionsLinksMode() {
+  const mode = getCurrentMode();
+  return mode === 'A' || mode === 'C';
+}
+
+// Get the color for a node, lighten a green based on level. Subtle.
+// Legacy function for backwards compatibility
 function getColor(level) {
-  return lightenHex('#caf7bcff', 5 * level); // Gets 5% lighter for each level
+  return lightenHex('#58d68d', 5 * level); // Gets 5% lighter for each level
 }
 // Get the highlighted color for a node, lighten a yellow based on level. Subtle.
 function getYellowColor(level) {
@@ -44,6 +104,12 @@ function getYellowColor(level) {
 // Get the color that an edge should be pointing to a certain level
 function getEdgeColor(level) {
   const nodecolor = getColor(level);
+  return vis.util.parseColor(nodecolor).border;
+}
+
+// Get edge color based on node type
+function getEdgeColorByNodeType(nodeType) {
+  const nodecolor = getColorByNodeType(nodeType);
   return vis.util.parseColor(nodecolor).border;
 }
 
@@ -82,12 +148,16 @@ function sign(x) {
 
 // == NETWORK SHORTCUTS == //
 
-// Color nodes from a list based on their level. If color=1, highlight color will be used.
+// Color nodes from a list based on their type. If color=1, highlight color will be used.
 function colorNodes(ns, color) {
-  const colorFunc = color ? getYellowColor : getColor;
-
   for (let i = 0; i < ns.length; i += 1) {
-    ns[i].color = colorFunc(ns[i].level);
+    if (color) {
+      // Highlight with yellow
+      ns[i].color = getYellowColor(ns[i].level);
+    } else {
+      // Restore original color based on node type
+      ns[i].color = getColorByNodeType(ns[i].nodeType || 'link');
+    }
     // Prevent snapping
     delete ns[i].x;
     delete ns[i].y;

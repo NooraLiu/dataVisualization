@@ -341,7 +341,7 @@ function drawLabels() {
   textAlign(RIGHT, CENTER);
   textSize(12);
   text('Layout:', 645, 15);
-  text('View:', 645, 85);
+  text('View:', 645, 85); 
 }
 
 // ── Level colors ─────────────────────────────────────────────────────────
