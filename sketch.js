@@ -36,6 +36,10 @@ let selectedScoring = 'Article Groups';
 let lastHoveredId = null;
 let tableHoverId = null;
 
+// Wikipedia-map tab reference
+let wikiMapWindow = null;
+let wikiMapArticles = [];
+
 // ── Dimension whitelist ──────────────────────────────────────────────────
 const DIMENSION_NAMES = [
   'base_pca1', 'base_pca2',
@@ -759,6 +763,36 @@ function drawLegend() {
     }
   }
   textAlign(LEFT, TOP);
+}
+
+// ── keyboard interaction ──────────────────────────────────────────────────
+function keyPressed() {
+  if (key === ' ' && hoverIndex !== -1) {
+    // Prevent default scrolling behavior
+    if (document.activeElement) document.activeElement.blur();
+
+    let pts = activePoints();
+    let p = pts[hoverIndex];
+    let title = p.articleTitle;
+    if (!title) return;
+
+    // Add this article to the list (avoid duplicates)
+    if (!wikiMapArticles.includes(title)) {
+      wikiMapArticles.push(title);
+    }
+
+    // Build URL with all accumulated articles
+    let articlesParam = wikiMapArticles.map(a => encodeURIComponent(a)).join(',');
+    let url = 'wikipedia-map/index.html?articles=' + articlesParam;
+
+    if (!wikiMapWindow || wikiMapWindow.closed) {
+      wikiMapWindow = window.open(url, 'wikiMap');
+    } else {
+      wikiMapWindow.location.href = url;
+      wikiMapWindow.focus();
+    }
+    return false; // prevent default
+  }
 }
 
 // ── mouse interaction ────────────────────────────────────────────────────

@@ -126,9 +126,48 @@
 
   <script>
     // Run events that need to happen on initialization.
+
+    // Remove any direct edges between start page nodes.
+    function removeDirectStartPageEdges() {
+      var sp = window.startpages || [];
+      if (sp.length < 2) return;
+      var spSet = {};
+      sp.forEach(function(id) { spSet[id] = true; });
+      var toRemove = edges.get({
+        filter: function(e) { return spSet[e.from] && spSet[e.to]; }
+      });
+      if (toRemove.length > 0) {
+        edges.remove(toRemove.map(function(e) { return e.id; }));
+      }
+    }
+
     window.onload = function () {
       bind();
-      loadSaved();
+
+      // Handle ?articles= URL parameter from scatterplot
+      var params = new URLSearchParams(window.location.search);
+      if (params.has('articles')) {
+        var articles = params.get('articles').split(',');
+        var cf = document.getElementById('input');
+        articles.forEach(function(a) {
+          var title = decodeURIComponent(a.trim());
+          if (title) addItem(cf, title);
+        });
+        var inputs = getItems(cf);
+        Promise.all(inputs.map(fetchPageTitle)).then(function(pageTitles) {
+          pageTitles.forEach(function(pageTitle, i) {
+            cf.getElementsByClassName('item')[i].dataset.nodeId = getNormalizedId(pageTitle);
+          });
+          setStartPages(pageTitles);
+          // Auto-expand all articles so their links are visible
+          pageTitles.forEach(function(pt) { expandNode(getNormalizedId(pt)); });
+          // Clean up direct edges between start pages
+          setTimeout(removeDirectStartPageEdges, 2000);
+        });
+        document.getElementById('clear').style.display = '';
+      } else {
+        loadSaved();
+      }
     };
   </script>
 </body>

@@ -2,7 +2,7 @@
 // Load a saved graph if an ID is provided in the query string
 
 function loadSaved() {
-  if (window.location.search) {
+  if (window.location.search && !new URLSearchParams(window.location.search).has('articles')) {
     window.progressbar = new Progress('Restoring saved graph...');
     const modalWindow = new Modal(window.progressbar.container, false);
     modalWindow.present();
