@@ -1,5 +1,5 @@
-/* global nodes, network, isTouchDevice, shepherd */
-/* global expandNode, traceBack, resetProperties, go, goRandom, clearNetwork, unwrap */
+/* global nodes, network, isTouchDevice, shepherd, getColorByNodeType */
+/* global expandNode, traceBack, resetProperties, go, goRandom, clearNetwork, unwrap, clearSelectedPath */
 // This script contains (most of) the code that binds actions to events.
 
 
@@ -8,6 +8,14 @@ function expandEvent(params) { // Expand a node (with event handler)
   if (params.nodes.length) { // Did the click occur on a node?
     const page = params.nodes[0]; // The id of the node clicked
     expandNode(page);
+  } else {
+    // Clicked on empty canvas — cancel pending path selection and clear active path
+    if (window.pathStart) {
+      const sn = nodes.get(window.pathStart);
+      if (sn) nodes.update({ id: window.pathStart, borderWidth: 0, color: getColorByNodeType(sn.nodeType || 'link') });
+      window.pathStart = null;
+    }
+    clearSelectedPath();
   }
 }
 

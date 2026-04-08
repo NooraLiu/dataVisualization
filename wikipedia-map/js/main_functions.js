@@ -1,4 +1,4 @@
-/* global nodes, edges, getSpawnPosition, getNormalizedId, wordwrap, unwrap, getColor, getEdgeColor, getColorByNodeType, getEdgeColorByNodeType, getShapeByNodeType, isShapeMode, isSectionsLinksMode, getCurrentMode, getEdgeConnecting, getPageSections, getSectionLinks, colorNodes, edgesWidth */ // eslint-disable-line max-len
+/* global nodes, edges, getSpawnPosition, getNormalizedId, wordwrap, unwrap, getColor, getEdgeColor, getColorByNodeType, getEdgeColorByNodeType, getShapeByNodeType, isShapeMode, isSectionsLinksMode, getCurrentMode, getEdgeConnecting, getPageSections, getSectionLinks, colorNodes, edgesWidth, markExpanded, findPath, highlightSelectedPath, clearSelectedPath */ // eslint-disable-line max-len
 // This script contains the big functions that implement a lot of the core
 // functionality, like expanding nodes, and getting the nodes for a traceback.
 
@@ -9,6 +9,7 @@ window.selectedNode = null;
 window.traceedges = [];
 window.tracenodes = [];
 window.expansionMode = 'C'; // Default mode: C (always sections)
+window.pathStart = null;    // First node selected for manual path-finding
 // ---------------------- //
 
 // Get the current expansion mode from the dropdown
@@ -198,6 +199,16 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
 
   nodes.add(subnodes);
   edges.add(newedges);
+
+  // In Mode A, primarySection nodes whose children were just added are visually "expanded"
+  // (triangles already hang from them). Mark them so a second click triggers path-finding
+  // rather than fetching links again.
+  if (includeChildren) {
+    const alreadyWithChildren = subnodes
+      .filter(n => n.nodeType === 'primarySection' && n.hasChildren)
+      .map(n => ({ id: n.id, isExpanded: true }));
+    if (alreadyWithChildren.length > 0) nodes.update(alreadyWithChildren);
+  }
 }
 
 // Expand secondary sections from a primary section node (Mode B)
@@ -296,6 +307,13 @@ function expandNodeWithLinks(page, links, isLeaf = false) {
   edges.add(newedges);
 }
 
+// Mark a node as expanded (tracked for re-expansion prevention)
+function markExpanded(id) {
+  const node = nodes.get(id);
+  if (!node) return;
+  nodes.update({ id, isExpanded: true });
+}
+
 // Expand a node based on the current mode
 function expandNode(id) {
   const node = nodes.get(id);
@@ -303,11 +321,54 @@ function expandNode(id) {
   const mode = getExpansionMode();
   const nodeType = node.nodeType || 'root'; // 'root', 'primarySection', 'secondarySection', or 'link'
   const isLeaf = node.isLeaf || false;
-  
+
   // If this is a leaf node, don't expand
   if (isLeaf) {
     console.log('This node cannot be expanded (leaf node)');
     return;
+  }
+
+  // If the node is already expanded, use it for manual path-finding between two nodes
+  if (node.isExpanded) {
+    // If a path is already displayed, clear it and start fresh selection
+    if (window.activePath) {
+      clearSelectedPath();
+      window.pathStart = null;
+    }
+
+    if (!window.pathStart) {
+      // First click — mark as selection start with thin gold outline only
+      window.pathStart = id;
+      const bg = getColorByNodeType(nodeType);
+      nodes.update({ id, borderWidth: 2,
+        color: { background: bg, border: '#FFC300', highlight: { background: bg, border: '#FFD700' } } });
+    } else if (window.pathStart === id) {
+      // Clicked the same node again — cancel selection
+      nodes.update({ id, borderWidth: 0, color: getColorByNodeType(nodeType) });
+      window.pathStart = null;
+    } else {
+      // Second click — find and highlight path
+      const prevStart = window.pathStart;
+      window.pathStart = null;
+      const found = highlightSelectedPath(prevStart, id);
+      if (!found) {
+        // No path — clear the start node's outline too
+        const sn = nodes.get(prevStart);
+        if (sn) nodes.update({ id: prevStart, borderWidth: 0, color: getColorByNodeType(sn.nodeType || 'link') });
+        console.log(`No path found between "${unwrap((nodes.get(prevStart) || {}).label || '')}" and "${pagename}"`);
+      }
+    }
+    return;
+  }
+
+  // Clicking an unexpanded node — clear any active path or pending selection first
+  if (window.activePath || window.pathStart) {
+    if (window.pathStart) {
+      const sn = nodes.get(window.pathStart);
+      if (sn) nodes.update({ id: window.pathStart, borderWidth: 0, color: getColorByNodeType(sn.nodeType || 'link') });
+      window.pathStart = null;
+    }
+    clearSelectedPath();
   }
 
   // Mode A & C: Sections (with subsections) ↔ Links
@@ -315,59 +376,90 @@ function expandNode(id) {
   if (mode === 'A' || mode === 'C') {
     if (nodeType === 'root' || nodeType === 'link') {
       // Root node or link node → fetch sections with children
-      getPageSections(pagename).then(({ redirectedTo, sections }) => {
-        const newId = renameNode(id, redirectedTo);
-        expandNodeWithSections(newId, sections, nodeType, redirectedTo, true); // Include children
-      });
+      getPageSections(pagename)
+        .then(({ redirectedTo, sections }) => {
+          const newId = renameNode(id, redirectedTo);
+          expandNodeWithSections(newId, sections, nodeType, redirectedTo, true);
+          markExpanded(newId);
+        })
+        .catch(err => {
+          console.error(`Failed to load sections for "${pagename}":`, err);
+          markExpanded(id); // Still mark so user knows we tried
+        });
     } else if (nodeType === 'primarySection' || nodeType === 'secondarySection') {
       // Section node → fetch links from that section
       const articleName = node.articleName;
-      getSectionLinks(articleName, pagename, 10).then(({ links }) => {
-        if (links.length > 0) {
-          expandNodeWithLinks(id, links, false);
-        } else {
-          console.log(`No links found in section "${pagename}" of "${articleName}"`);
-        }
-      });
+      getSectionLinks(articleName, pagename, 10)
+        .then(({ links }) => {
+          if (links.length > 0) {
+            expandNodeWithLinks(id, links, false);
+          } else {
+            console.log(`No links found in section "${pagename}" of "${articleName}"`);
+          }
+          markExpanded(id);
+        })
+        .catch(err => {
+          console.error(`Failed to load links for section "${pagename}":`, err);
+          markExpanded(id);
+        });
     }
   }
   // Mode B: Primary sections → Secondary sections → Links → Sections...
   else if (mode === 'B') {
     if (nodeType === 'root' || nodeType === 'link') {
       // Root node or link node → fetch only primary sections (no children)
-      getPageSections(pagename).then(({ redirectedTo, sections }) => {
-        const newId = renameNode(id, redirectedTo);
-        expandNodeWithSections(newId, sections, nodeType, redirectedTo, false); // Don't include children
-      });
+      getPageSections(pagename)
+        .then(({ redirectedTo, sections }) => {
+          const newId = renameNode(id, redirectedTo);
+          expandNodeWithSections(newId, sections, nodeType, redirectedTo, false);
+          markExpanded(newId);
+        })
+        .catch(err => {
+          console.error(`Failed to load sections for "${pagename}":`, err);
+          markExpanded(id);
+        });
     } else if (nodeType === 'primarySection') {
       // Primary section → show secondary sections if available, otherwise show links
       const hasChildren = node.hasChildren;
       const childrenData = node.childrenData;
       const articleName = node.articleName;
-      
+
       if (hasChildren && childrenData && childrenData.length > 0) {
         // Show secondary sections
         expandNodeWithSecondarySection(id, childrenData, articleName);
+        markExpanded(id);
       } else {
         // No children, show links directly
-        getSectionLinks(articleName, pagename, 10).then(({ links }) => {
+        getSectionLinks(articleName, pagename, 10)
+          .then(({ links }) => {
+            if (links.length > 0) {
+              expandNodeWithLinks(id, links, false);
+            } else {
+              console.log(`No links found in section "${pagename}" of "${articleName}"`);
+            }
+            markExpanded(id);
+          })
+          .catch(err => {
+            console.error(`Failed to load links for section "${pagename}":`, err);
+            markExpanded(id);
+          });
+      }
+    } else if (nodeType === 'secondarySection') {
+      // Secondary section → fetch links
+      const articleName = node.articleName;
+      getSectionLinks(articleName, pagename, 10)
+        .then(({ links }) => {
           if (links.length > 0) {
             expandNodeWithLinks(id, links, false);
           } else {
             console.log(`No links found in section "${pagename}" of "${articleName}"`);
           }
+          markExpanded(id);
+        })
+        .catch(err => {
+          console.error(`Failed to load links for section "${pagename}":`, err);
+          markExpanded(id);
         });
-      }
-    } else if (nodeType === 'secondarySection') {
-      // Secondary section → fetch links
-      const articleName = node.articleName;
-      getSectionLinks(articleName, pagename, 10).then(({ links }) => {
-        if (links.length > 0) {
-          expandNodeWithLinks(id, links, false);
-        } else {
-          console.log(`No links found in section "${pagename}" of "${articleName}"`);
-        }
-      });
     }
   }
 

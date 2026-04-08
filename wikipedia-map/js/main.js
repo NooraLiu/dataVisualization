@@ -16,6 +16,9 @@ const container = document.getElementById('container');
 const options = {
   nodes: {
     shape: 'dot',
+    borderWidth: 0,
+    borderWidthSelected: 0,
+    shapeProperties: { borderDashes: false },
     scaling: {
       min: 20,
       max: 30,

@@ -151,12 +151,21 @@ function sign(x) {
 // Color nodes from a list based on their type. If color=1, highlight color will be used.
 function colorNodes(ns, color) {
   for (let i = 0; i < ns.length; i += 1) {
+    const onPath = window.activePath && window.activePath.nodeIds.has(ns[i].id);
+    const isPathStart = ns[i].id === window.pathStart;
     if (color) {
-      // Highlight with yellow
+      // Highlight with yellow (temporary traceback — path border will be re-applied on restore)
       ns[i].color = getYellowColor(ns[i].level);
     } else {
-      // Restore original color based on node type
-      ns[i].color = getColorByNodeType(ns[i].nodeType || 'link');
+      const bg = getColorByNodeType(ns[i].nodeType || 'link');
+      if (onPath || isPathStart) {
+        // Preserve gold border for nodes on the active path or pending selection
+        ns[i].color = { background: bg, border: '#FFC300', highlight: { background: bg, border: '#FFD700' } };
+        ns[i].borderWidth = 2;
+      } else {
+        ns[i].color = bg;
+        ns[i].borderWidth = 0;
+      }
     }
     // Prevent snapping
     delete ns[i].x;
@@ -173,6 +182,86 @@ function edgesWidth(es, width) {
   }
   edges.update(es);
   window.isReset = false;
+}
+
+// Find shortest undirected path between two nodes via BFS.
+// Returns { nodeIds: Set, edgeIds: Set } or null if no path exists.
+function findPath(startId, goalId) {
+  const allEdges = edges.get();
+  const adj = {};
+  for (const e of allEdges) {
+    if (!adj[e.from]) adj[e.from] = [];
+    if (!adj[e.to]) adj[e.to] = [];
+    adj[e.from].push({ neighbor: e.to, edgeId: e.id });
+    adj[e.to].push({ neighbor: e.from, edgeId: e.id });
+  }
+  const visited = new Set([startId]);
+  const queue = [{ id: startId, nodePath: [startId], edgePath: [] }];
+  while (queue.length > 0) {
+    const { id, nodePath, edgePath } = queue.shift();
+    for (const { neighbor, edgeId } of (adj[id] || [])) {
+      if (visited.has(neighbor)) continue;
+      const newNodePath = [...nodePath, neighbor];
+      const newEdgePath = [...edgePath, edgeId];
+      if (neighbor === goalId) {
+        return { nodeIds: new Set(newNodePath), edgeIds: new Set(newEdgePath) };
+      }
+      visited.add(neighbor);
+      queue.push({ id: neighbor, nodePath: newNodePath, edgePath: newEdgePath });
+    }
+  }
+  return null;
+}
+
+// Highlight a found path between two manually selected nodes.
+window.activePath = null; // { startId, endId, nodeIds: Set, edgeIds: Set }
+
+function highlightSelectedPath(startId, endId) {
+  const result = findPath(startId, endId);
+  clearSelectedPath();
+  if (!result) return false;
+
+  window.activePath = { startId, endId, nodeIds: result.nodeIds, edgeIds: result.edgeIds };
+
+  // Style path edges gold
+  const pathEdges = edges.get({ filter: e => result.edgeIds.has(e.id) });
+  edges.update(pathEdges.map(e => ({
+    id: e.id,
+    color: { color: '#FFC300', highlight: '#FFD700', hover: '#FFD700' },
+    width: 3,
+  })));
+
+  // Style all path nodes (endpoints + intermediates) with thin gold border only
+  const pathNodes = nodes.get({ filter: n => result.nodeIds.has(n.id) });
+  nodes.update(pathNodes.map(n => {
+    const bg = getColorByNodeType(n.nodeType || 'link');
+    return {
+      id: n.id,
+      borderWidth: 2,
+      color: { background: bg, border: '#FFC300', highlight: { background: bg, border: '#FFD700' } },
+    };
+  }));
+
+  return true;
+}
+
+function clearSelectedPath() {
+  if (!window.activePath) return;
+  // Restore edges to their type-based color
+  const pathEdges = edges.get({ filter: e => window.activePath.edgeIds.has(e.id) });
+  edges.update(pathEdges.map(e => ({
+    id: e.id,
+    color: getEdgeColorByNodeType((nodes.get(e.to) || {}).nodeType || 'link'),
+    width: 1,
+  })));
+  // Restore nodes to their type-based color, no border
+  const pathNodes = nodes.get({ filter: n => window.activePath.nodeIds.has(n.id) });
+  nodes.update(pathNodes.map(n => ({
+    id: n.id,
+    borderWidth: 0,
+    color: getColorByNodeType(n.nodeType || 'link'),
+  })));
+  window.activePath = null;
 }
 
 // Get the id of the edge connecting two nodes a and b
