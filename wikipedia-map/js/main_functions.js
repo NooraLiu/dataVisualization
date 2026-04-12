@@ -116,12 +116,13 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
   const level = node.level + 1;
   const childLevel = level + 1;
 
+  const effectiveArticleName = articleName || unwrap(node.label);
   const subnodes = [];
   const newedges = [];
   const [x, y] = getSpawnPosition(page);
 
   for (const section of sections) {
-    const sectionID = getNormalizedId(section.name);
+    const sectionID = getNormalizedId(effectiveArticleName + ' ' + section.name);
     
     // Add the top-level section node
     if (!nodes.getIds().includes(sectionID)) {
@@ -135,7 +136,8 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
         x,
         y,
         nodeType: 'primarySection', // Mark as primary section node
-        articleName: articleName || unwrap(node.label), // Track which article this section belongs to
+        articleName: effectiveArticleName,
+        sectionName: section.name, // Raw section name for API calls
         hasChildren: section.children.length > 0,
         childrenData: section.children, // Store children for later expansion in Mode B
       };
@@ -161,7 +163,7 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
     // Only add children if includeChildren is true (Mode A behavior)
     if (includeChildren) {
       for (const child of section.children) {
-        const childID = getNormalizedId(child);
+        const childID = getNormalizedId(effectiveArticleName + ' ' + section.name + ' ' + child);
         
         if (!nodes.getIds().includes(childID)) {
           const childNode = {
@@ -174,7 +176,8 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
             x,
             y,
             nodeType: 'secondarySection', // Subsections are secondary section nodes
-            articleName: articleName || unwrap(node.label),
+            articleName: effectiveArticleName,
+            sectionName: child, // Raw subsection name for API calls
           };
           // Add shape for Mode A
           if (isShapeMode()) {
@@ -208,6 +211,29 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
       .filter(n => n.nodeType === 'primarySection' && n.hasChildren)
       .map(n => ({ id: n.id, isExpanded: true }));
     if (alreadyWithChildren.length > 0) nodes.update(alreadyWithChildren);
+
+    // Auto-expand to circle (link) level: fetch links for every secondary section
+    // and for primary sections that have no subsections.
+    // Stagger requests by 300ms each to avoid overwhelming the browser/API.
+    const sectionsToLink = subnodes.filter(function(n) {
+      return n.nodeType === 'secondarySection' ||
+        (n.nodeType === 'primarySection' && !n.hasChildren);
+    });
+    sectionsToLink.forEach(function(sectionNode, i) {
+      setTimeout(function() {
+        var sectionName = sectionNode.sectionName;
+        var article = sectionNode.articleName;
+        getSectionLinks(article, sectionName, 10)
+          .then(function(result) {
+            if (result.links.length > 0) expandNodeWithLinks(sectionNode.id, result.links, false);
+            markExpanded(sectionNode.id);
+          })
+          .catch(function(err) {
+            console.error('Failed to load links for section "' + sectionName + '":', err);
+            markExpanded(sectionNode.id);
+          });
+      }, i * 300);
+    });
   }
 }
 
@@ -215,13 +241,14 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
 function expandNodeWithSecondarySection(page, children, articleName) {
   const node = nodes.get(page);
   const level = node.level + 1;
+  const parentSectionName = node.sectionName || unwrap(node.label);
 
   const subnodes = [];
   const newedges = [];
   const [x, y] = getSpawnPosition(page);
 
   for (const child of children) {
-    const childID = getNormalizedId(child);
+    const childID = getNormalizedId(articleName + ' ' + parentSectionName + ' ' + child);
     
     if (!nodes.getIds().includes(childID)) {
       const childNode = {
@@ -235,6 +262,7 @@ function expandNodeWithSecondarySection(page, children, articleName) {
         y,
         nodeType: 'secondarySection',
         articleName: articleName,
+        sectionName: child, // Raw subsection name for API calls
       };
       // Add shape for Mode A
       if (isShapeMode()) {
@@ -318,6 +346,7 @@ function markExpanded(id) {
 function expandNode(id) {
   const node = nodes.get(id);
   const pagename = unwrap(node.label);
+  const sectionName = node.sectionName || pagename; // Raw section name for API calls (dot-notation labels otherwise)
   const mode = getExpansionMode();
   const nodeType = node.nodeType || 'root'; // 'root', 'primarySection', 'secondarySection', or 'link'
   const isLeaf = node.isLeaf || false;
@@ -375,11 +404,13 @@ function expandNode(id) {
   // Mode A uses shapes, Mode C uses distinct colors
   if (mode === 'A' || mode === 'C') {
     if (nodeType === 'root' || nodeType === 'link') {
-      // Root node or link node → fetch sections with children
+      // Root: full auto-expand (diamonds + triangles + circles)
+      // Link (circle): only expand one level (diamonds only)
+      const withChildren = nodeType === 'root';
       getPageSections(pagename)
         .then(({ redirectedTo, sections }) => {
           const newId = renameNode(id, redirectedTo);
-          expandNodeWithSections(newId, sections, nodeType, redirectedTo, true);
+          expandNodeWithSections(newId, sections, nodeType, redirectedTo, withChildren);
           markExpanded(newId);
         })
         .catch(err => {
@@ -389,17 +420,17 @@ function expandNode(id) {
     } else if (nodeType === 'primarySection' || nodeType === 'secondarySection') {
       // Section node → fetch links from that section
       const articleName = node.articleName;
-      getSectionLinks(articleName, pagename, 10)
+      getSectionLinks(articleName, sectionName, 10)
         .then(({ links }) => {
           if (links.length > 0) {
             expandNodeWithLinks(id, links, false);
           } else {
-            console.log(`No links found in section "${pagename}" of "${articleName}"`);
+            console.log(`No links found in section "${sectionName}" of "${articleName}"`);
           }
           markExpanded(id);
         })
         .catch(err => {
-          console.error(`Failed to load links for section "${pagename}":`, err);
+          console.error(`Failed to load links for section "${sectionName}":`, err);
           markExpanded(id);
         });
     }
@@ -430,34 +461,34 @@ function expandNode(id) {
         markExpanded(id);
       } else {
         // No children, show links directly
-        getSectionLinks(articleName, pagename, 10)
+        getSectionLinks(articleName, sectionName, 10)
           .then(({ links }) => {
             if (links.length > 0) {
               expandNodeWithLinks(id, links, false);
             } else {
-              console.log(`No links found in section "${pagename}" of "${articleName}"`);
+              console.log(`No links found in section "${sectionName}" of "${articleName}"`);
             }
             markExpanded(id);
           })
           .catch(err => {
-            console.error(`Failed to load links for section "${pagename}":`, err);
+            console.error(`Failed to load links for section "${sectionName}":`, err);
             markExpanded(id);
           });
       }
     } else if (nodeType === 'secondarySection') {
       // Secondary section → fetch links
       const articleName = node.articleName;
-      getSectionLinks(articleName, pagename, 10)
+      getSectionLinks(articleName, sectionName, 10)
         .then(({ links }) => {
           if (links.length > 0) {
             expandNodeWithLinks(id, links, false);
           } else {
-            console.log(`No links found in section "${pagename}" of "${articleName}"`);
+            console.log(`No links found in section "${sectionName}" of "${articleName}"`);
           }
           markExpanded(id);
         })
         .catch(err => {
-          console.error(`Failed to load links for section "${pagename}":`, err);
+          console.error(`Failed to load links for section "${sectionName}":`, err);
           markExpanded(id);
         });
     }
