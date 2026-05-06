@@ -111,7 +111,7 @@ function expandNodeCallback(page, data) {
 // sections is an array of {name: string, children: string[]}
 // nodeType: 'root' for main search node, 'section' for section nodes, 'link' for link nodes
 // includeChildren: whether to include subsections as child nodes (Mode A) or not (Mode B first click)
-function expandNodeWithSections(page, sections, nodeType = 'section', articleName = null, includeChildren = true) {
+function expandNodeWithSections(page, sections, nodeType = 'section', articleName = null, includeChildren = true, sectionIndexMap = {}) {
   const node = nodes.get(page);
   const level = node.level + 1;
   const childLevel = level + 1;
@@ -138,6 +138,7 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
         nodeType: 'primarySection', // Mark as primary section node
         articleName: effectiveArticleName,
         sectionName: section.name, // Raw section name for API calls
+        sectionIndex: sectionIndexMap[section.name], // Pre-fetched index avoids a redundant API call
         hasChildren: section.children.length > 0,
         childrenData: section.children, // Store children for later expansion in Mode B
       };
@@ -178,6 +179,7 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
             nodeType: 'secondarySection', // Subsections are secondary section nodes
             articleName: effectiveArticleName,
             sectionName: child, // Raw subsection name for API calls
+            sectionIndex: sectionIndexMap[child], // Pre-fetched index avoids a redundant API call
           };
           // Add shape for Mode A
           if (isShapeMode()) {
@@ -219,20 +221,20 @@ function expandNodeWithSections(page, sections, nodeType = 'section', articleNam
       return n.nodeType === 'secondarySection' ||
         (n.nodeType === 'primarySection' && !n.hasChildren);
     });
-    sectionsToLink.forEach(function(sectionNode, i) {
-      setTimeout(function() {
-        var sectionName = sectionNode.sectionName;
-        var article = sectionNode.articleName;
-        getSectionLinks(article, sectionName, 10)
-          .then(function(result) {
-            if (result.links.length > 0) expandNodeWithLinks(sectionNode.id, result.links, false);
-            markExpanded(sectionNode.id);
-          })
-          .catch(function(err) {
-            console.error('Failed to load links for section "' + sectionName + '":', err);
-            markExpanded(sectionNode.id);
-          });
-      }, i * 300);
+    // The queryApi queue handles throttling, so no setTimeout stagger is needed here.
+    // Pass the pre-fetched sectionIndex so getSectionLinks skips the redundant getSectionIndex call.
+    sectionsToLink.forEach(function(sectionNode) {
+      var sectionName = sectionNode.sectionName;
+      var article = sectionNode.articleName;
+      getSectionLinks(article, sectionName, 10, sectionNode.sectionIndex)
+        .then(function(result) {
+          if (result.links.length > 0) expandNodeWithLinks(sectionNode.id, result.links, false);
+          markExpanded(sectionNode.id);
+        })
+        .catch(function(err) {
+          console.error('Failed to load links for section "' + sectionName + '":', err);
+          markExpanded(sectionNode.id);
+        });
     });
   }
 }
@@ -408,9 +410,9 @@ function expandNode(id) {
       // Link (circle): only expand one level (diamonds only)
       const withChildren = nodeType === 'root';
       getPageSections(pagename)
-        .then(({ redirectedTo, sections }) => {
+        .then(({ redirectedTo, sections, sectionIndexMap }) => {
           const newId = renameNode(id, redirectedTo);
-          expandNodeWithSections(newId, sections, nodeType, redirectedTo, withChildren);
+          expandNodeWithSections(newId, sections, nodeType, redirectedTo, withChildren, sectionIndexMap);
           markExpanded(newId);
         })
         .catch(err => {

@@ -185,9 +185,9 @@ function edgesWidth(es, width) {
   window.isReset = false;
 }
 
-// Find shortest undirected path between two nodes via BFS.
-// Returns { nodeIds: Set, edgeIds: Set } or null if no path exists.
-function findPath(startId, goalId) {
+// Build an undirected adjacency list from all current edges.
+// Pass the result to findPath to avoid rebuilding it for every pair.
+function buildAdj() {
   const allEdges = edges.get();
   const adj = {};
   for (const e of allEdges) {
@@ -196,22 +196,42 @@ function findPath(startId, goalId) {
     adj[e.from].push({ neighbor: e.to, edgeId: e.id });
     adj[e.to].push({ neighbor: e.from, edgeId: e.id });
   }
-  const visited = new Set([startId]);
-  const queue = [{ id: startId, nodePath: [startId], edgePath: [] }];
-  while (queue.length > 0) {
-    const { id, nodePath, edgePath } = queue.shift();
+  return adj;
+}
+
+// Find shortest undirected path between two nodes via BFS.
+// Returns { nodeIds: Set, edgeIds: Set } or null if no path exists.
+// Accepts an optional pre-built adjacency list to avoid redundant edge scans.
+function findPath(startId, goalId, adj) {
+  if (startId === goalId) return { nodeIds: new Set([startId]), edgeIds: new Set() };
+  if (!adj) adj = buildAdj();
+  // Use parent-pointer BFS — O(n) memory instead of copying full paths per node.
+  const parent = {}; // node -> { from, edgeId } | null for startId
+  parent[startId] = null;
+  const queue = [startId];
+  let found = false;
+  outer: while (queue.length > 0) {
+    const id = queue.shift();
     for (const { neighbor, edgeId } of (adj[id] || [])) {
-      if (visited.has(neighbor)) continue;
-      const newNodePath = [...nodePath, neighbor];
-      const newEdgePath = [...edgePath, edgeId];
-      if (neighbor === goalId) {
-        return { nodeIds: new Set(newNodePath), edgeIds: new Set(newEdgePath) };
-      }
-      visited.add(neighbor);
-      queue.push({ id: neighbor, nodePath: newNodePath, edgePath: newEdgePath });
+      if (neighbor in parent) continue;
+      parent[neighbor] = { from: id, edgeId };
+      if (neighbor === goalId) { found = true; break outer; }
+      queue.push(neighbor);
     }
   }
-  return null;
+  if (!found) return null;
+  // Backtrack from goalId to startId to recover the path.
+  const nodeIds = new Set();
+  const edgeIds = new Set();
+  let cur = goalId;
+  while (cur !== startId) {
+    nodeIds.add(cur);
+    const { from, edgeId } = parent[cur];
+    edgeIds.add(edgeId);
+    cur = from;
+  }
+  nodeIds.add(startId);
+  return { nodeIds, edgeIds };
 }
 
 // Highlight a found path between two manually selected nodes.
@@ -300,9 +320,11 @@ function highlightAllRootPaths() {
   const allNodeIds = new Set();
   const allEdgeIds = new Set();
 
+  // Build adjacency list once and reuse across all root-pair searches.
+  const adj = buildAdj();
   for (let i = 0; i < roots.length; i += 1) {
     for (let j = i + 1; j < roots.length; j += 1) {
-      const result = findPath(roots[i], roots[j]);
+      const result = findPath(roots[i], roots[j], adj);
       if (!result) continue;
       result.nodeIds.forEach(id => allNodeIds.add(id));
       result.edgeIds.forEach(id => allEdgeIds.add(id));

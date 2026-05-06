@@ -141,17 +141,16 @@
       }
     }
 
-    // As sections/links expand asynchronously, refresh the pairwise
-    // root-to-root highlights several times.
+    // Run root-path highlights on every pass, and definitively when the API queue drains.
     function scheduleRootPathHighlights(passes) {
       var remaining = passes;
       function run() {
         removeDirectStartPageEdges();
         highlightAllRootPaths();
         remaining -= 1;
-        if (remaining > 0) setTimeout(run, 1200);
+        if (remaining > 0) setTimeout(run, 2000);
       }
-      run();
+      setTimeout(run, 1500); // first pass after expansion has had a moment to start
     }
 
     window.onload = function () {
@@ -172,10 +171,15 @@
             cf.getElementsByClassName('item')[i].dataset.nodeId = getNormalizedId(pageTitle);
           });
           setStartPages(pageTitles);
-          // Auto-expand all articles so their links are visible
+          // Auto-expand all articles. The queryApi queue throttles concurrency.
           pageTitles.forEach(function(pt) { expandNode(getNormalizedId(pt)); });
-          // Keep root-to-root paths highlighted as expansion fills in
-          setTimeout(function() { scheduleRootPathHighlights(8); }, 500);
+          // Periodic passes give visual feedback while expansion is in progress.
+          scheduleRootPathHighlights(4);
+          // Definitive highlight fires exactly when all queued API requests finish.
+          onQueueDrain(function() {
+            removeDirectStartPageEdges();
+            highlightAllRootPaths();
+          });
         });
         document.getElementById('clear').style.display = '';
       } else {

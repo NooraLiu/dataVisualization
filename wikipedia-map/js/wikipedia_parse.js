@@ -3,12 +3,74 @@ const base = 'https://en.wikipedia.org/w/api.php';
 
 const domParser = new DOMParser();
 
-/* Make a request to the Wikipedia API */
+// Concurrency-limited request queue.
+// At most MAX_CONCURRENT requests run in parallel, with a small MIN_GAP_MS
+// politeness delay between each new request start.
+// All queryApi calls funnel through here so Wikipedia is never flooded.
+const MAX_CONCURRENT = 3;
+const MIN_GAP_MS = 50; // max ~20 req/sec total — well within Wikipedia's limit
+let _activeCount = 0;
+let _lastStartTime = 0;
+const _requestQueue = [];
+const _drainCallbacks = []; // called once when queue empties and nothing is in-flight
+
+function _startNext() {
+  if (_activeCount >= MAX_CONCURRENT || _requestQueue.length === 0) return;
+  const wait = Math.max(0, _lastStartTime + MIN_GAP_MS - Date.now());
+  if (wait > 0) {
+    // Re-check after the gap elapses; multiple simultaneous calls are harmless
+    // because each one re-verifies the condition before launching.
+    setTimeout(_startNext, wait);
+    return;
+  }
+  const { run, resolve, reject } = _requestQueue.shift();
+  _activeCount += 1;
+  _lastStartTime = Date.now();
+  run().then(resolve, reject).finally(function() {
+    _activeCount -= 1;
+    _startNext();
+    // Fire drain callbacks once the queue is truly idle
+    if (_activeCount === 0 && _requestQueue.length === 0 && _drainCallbacks.length > 0) {
+      var cbs = _drainCallbacks.splice(0);
+      cbs.forEach(function(cb) { setTimeout(cb, 100); });
+    }
+  });
+  _startNext(); // fill remaining concurrent slots immediately
+}
+
+function _enqueue(run) {
+  return new Promise(function(resolve, reject) {
+    _requestQueue.push({ run: run, resolve: resolve, reject: reject });
+    _startNext();
+  });
+}
+
+/** Register a one-shot callback that fires when all queued requests finish. */
+function onQueueDrain(cb) {
+  _drainCallbacks.push(cb);
+}
+
+// Retry a fetch on 429 without re-enqueueing — keeps the slot open and retries
+// in place so the queue stays sequential and doesn't leak extra active slots.
+function _fetchWithRetry(url, retries, backoff) {
+  return fetch(url).then(function(response) {
+    if (response.status === 429) {
+      if (retries === 0) return Promise.reject(new Error('Wikipedia API rate limited after retries'));
+      return new Promise(function(resolve) { setTimeout(resolve, backoff); })
+        .then(function() { return _fetchWithRetry(url, retries - 1, backoff * 2); });
+    }
+    return response.json();
+  });
+}
+
+/* Make a request to the Wikipedia API.
+ * All requests are serialised (one at a time, 300ms apart).
+ * 429 responses are retried with exponential backoff without re-entering the queue. */
 function queryApi(query) {
   const url = new URL(base);
   const params = { format: 'json', origin: '*', ...query };
   Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
-  return fetch(url).then(response => response.json());
+  return _enqueue(function() { return _fetchWithRetry(url, 6, 2000); });
 }
 
 /**
@@ -122,10 +184,13 @@ function getPageSections(pageName) {
     let currentTopLevel = null;
     let excludeCurrentSection = false;
     
+    // Build both the hierarchy and a name→index lookup in a single pass
+    const sectionIndexMap = {};
     for (const section of res.parse.sections) {
       const sectionName = section.line.replace(/<[^>]*>/g, ''); // Strip HTML tags
       const sectionNameLower = sectionName.toLowerCase();
       const level = parseInt(section.toclevel, 10);
+      sectionIndexMap[sectionName] = parseInt(section.index, 10);
       
       // Check if this is a top-level section (level 1)
       if (level === 1) {
@@ -148,7 +213,7 @@ function getPageSections(pageName) {
       // Ignore deeper levels (level 3+) for now
     }
     
-    return { redirectedTo, sections: topLevelSections };
+    return { redirectedTo, sections: topLevelSections, sectionIndexMap };
   });
 }
 
@@ -183,8 +248,13 @@ function getSectionIndex(pageName, sectionName) {
  * @param {number} limit - Maximum number of links to return (default 10)
  * @returns {Promise<{links: string[]}>}
  */
-function getSectionLinks(pageName, sectionName, limit = 10) {
-  return getSectionIndex(pageName, sectionName).then(sectionIndex => {
+function getSectionLinks(pageName, sectionName, limit = 10, knownIndex) {
+  // If the caller already knows the section index (from getPageSections), use it directly
+  // to avoid a redundant getSectionIndex API call.
+  const indexPromise = (knownIndex !== undefined)
+    ? Promise.resolve(knownIndex)
+    : getSectionIndex(pageName, sectionName);
+  return indexPromise.then(sectionIndex => {
     if (sectionIndex === null) {
       console.log(`Section "${sectionName}" not found in "${pageName}"`);
       return { links: [] };
