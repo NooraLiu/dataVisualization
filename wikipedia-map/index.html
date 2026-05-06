@@ -141,6 +141,19 @@
       }
     }
 
+    // As sections/links expand asynchronously, refresh the pairwise
+    // root-to-root highlights several times.
+    function scheduleRootPathHighlights(passes) {
+      var remaining = passes;
+      function run() {
+        removeDirectStartPageEdges();
+        highlightAllRootPaths();
+        remaining -= 1;
+        if (remaining > 0) setTimeout(run, 1200);
+      }
+      run();
+    }
+
     window.onload = function () {
       bind();
 
@@ -161,8 +174,8 @@
           setStartPages(pageTitles);
           // Auto-expand all articles so their links are visible
           pageTitles.forEach(function(pt) { expandNode(getNormalizedId(pt)); });
-          // Clean up direct edges between start pages
-          setTimeout(removeDirectStartPageEdges, 2000);
+          // Keep root-to-root paths highlighted as expansion fills in
+          setTimeout(function() { scheduleRootPathHighlights(8); }, 500);
         });
         document.getElementById('clear').style.display = '';
       } else {

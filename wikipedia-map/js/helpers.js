@@ -152,13 +152,14 @@ function sign(x) {
 function colorNodes(ns, color) {
   for (let i = 0; i < ns.length; i += 1) {
     const onPath = window.activePath && window.activePath.nodeIds.has(ns[i].id);
+    const onRootPath = window.activeRootPaths && window.activeRootPaths.nodeIds.has(ns[i].id);
     const isPathStart = ns[i].id === window.pathStart;
     if (color) {
       // Highlight with yellow (temporary traceback — path border will be re-applied on restore)
       ns[i].color = getYellowColor(ns[i].level);
     } else {
       const bg = getColorByNodeType(ns[i].nodeType || 'link');
-      if (onPath || isPathStart) {
+      if (onPath || onRootPath || isPathStart) {
         // Preserve gold border for nodes on the active path or pending selection
         ns[i].color = { background: bg, border: '#FFC300', highlight: { background: bg, border: '#FFD700' } };
         ns[i].borderWidth = 2;
@@ -215,6 +216,7 @@ function findPath(startId, goalId) {
 
 // Highlight a found path between two manually selected nodes.
 window.activePath = null; // { startId, endId, nodeIds: Set, edgeIds: Set }
+window.activeRootPaths = null; // { nodeIds: Set, edgeIds: Set }
 
 function highlightSelectedPath(startId, endId) {
   const result = findPath(startId, endId);
@@ -262,6 +264,75 @@ function clearSelectedPath() {
     color: getColorByNodeType(n.nodeType || 'link'),
   })));
   window.activePath = null;
+}
+
+function clearRootPathHighlights() {
+  if (!window.activeRootPaths) return;
+  // Restore edges to their type-based color
+  const pathEdges = edges.get({ filter: e => window.activeRootPaths.edgeIds.has(e.id) });
+  edges.update(pathEdges.map(e => ({
+    id: e.id,
+    color: getEdgeColorByNodeType((nodes.get(e.to) || {}).nodeType || 'link'),
+    width: 1,
+  })));
+  // Restore nodes to their type-based color, no border
+  const pathNodes = nodes.get({ filter: n => window.activeRootPaths.nodeIds.has(n.id) });
+  nodes.update(pathNodes.map(n => ({
+    id: n.id,
+    borderWidth: 0,
+    color: getColorByNodeType(n.nodeType || 'link'),
+  })));
+  window.activeRootPaths = null;
+
+  // Re-apply manual selected path if present, because clearing root highlights
+  // may have reset styling for overlapping nodes/edges.
+  if (window.activePath) {
+    highlightSelectedPath(window.activePath.startId, window.activePath.endId);
+  }
+}
+
+function highlightAllRootPaths() {
+  clearRootPathHighlights();
+
+  const roots = (window.startpages || []).filter(id => nodes.get(id));
+  if (roots.length < 2) return false;
+
+  const allNodeIds = new Set();
+  const allEdgeIds = new Set();
+
+  for (let i = 0; i < roots.length; i += 1) {
+    for (let j = i + 1; j < roots.length; j += 1) {
+      const result = findPath(roots[i], roots[j]);
+      if (!result) continue;
+      result.nodeIds.forEach(id => allNodeIds.add(id));
+      result.edgeIds.forEach(id => allEdgeIds.add(id));
+    }
+  }
+
+  if (allEdgeIds.size === 0) return false;
+
+  window.activeRootPaths = { nodeIds: allNodeIds, edgeIds: allEdgeIds };
+
+  // Style path edges gold
+  const pathEdges = edges.get({ filter: e => allEdgeIds.has(e.id) });
+  edges.update(pathEdges.map(e => ({
+    id: e.id,
+    color: { color: '#FFC300', highlight: '#FFD700', hover: '#FFD700' },
+    width: 3,
+  })));
+
+  // Style path nodes with a thin gold border
+  const pathNodes = nodes.get({ filter: n => allNodeIds.has(n.id) });
+  nodes.update(pathNodes.map(n => {
+    const bg = getColorByNodeType(n.nodeType || 'link');
+    return {
+      id: n.id,
+      borderWidth: 2,
+      color: { background: bg, border: '#FFC300', highlight: { background: bg, border: '#FFD700' } },
+    };
+  }));
+
+  return true;
 }
 
 // Get the id of the edge connecting two nodes a and b

@@ -539,10 +539,17 @@ function resetProperties() {
     // Reset edge width and color
     const modedges = window.traceedges.map((i) => {
       const e = edges.get(i);
-      e.color = getEdgeColor(nodes.get(e.to).level);
+      const onRootPath = window.activeRootPaths && window.activeRootPaths.edgeIds.has(e.id);
+      if (onRootPath) {
+        e.color = { color: '#FFC300', highlight: '#FFD700', hover: '#FFD700' };
+        e.width = 3;
+      } else {
+        e.color = getEdgeColor(nodes.get(e.to).level);
+        e.width = 1;
+      }
       return e;
     });
-    edgesWidth(modedges, 1);
+    edges.update(modedges);
     window.tracenodes = [];
     window.traceedges = [];
   }
@@ -561,9 +568,16 @@ function traceBack(node) {
     // Widen edges
     const modedges = window.traceedges.map((i) => {
       const e = edges.get(i);
-      e.color = { inherit: 'to' };
+      const onRootPath = window.activeRootPaths && window.activeRootPaths.edgeIds.has(e.id);
+      if (!onRootPath) {
+        e.color = { inherit: 'to' };
+        e.width = 5;
+      } else {
+        e.width = 3;
+      }
       return e;
     });
-    edgesWidth(modedges, 5);
+    edges.update(modedges);
+    window.isReset = false;
   }
 }
