@@ -75,6 +75,10 @@
 }
 
 .item.locked {
-  cursor: not-allowed;
+  cursor: pointer;
   background-color: rgba(140, 161, 175, 0.6);
+}
+
+.item.locked:hover {
+  background-color: rgba(100, 140, 200, 0.7);
 }

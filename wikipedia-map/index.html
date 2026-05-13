@@ -153,6 +153,25 @@
       setTimeout(run, 1500); // first pass after expansion has had a moment to start
     }
 
+    // Snap the camera to a root-article node in the graph.
+    function focusNode(nodeId) {
+      if (!nodeId || !nodes.get(nodeId)) return;
+      network.focus(nodeId, { scale: 1.2, animation: { duration: 600, easingFunction: 'easeInOutQuad' } });
+      network.selectNodes([nodeId]);
+    }
+
+    // Attach a click handler to a commafield item tag so clicking snaps the camera
+    // to its corresponding node instead of (or in addition to) removing the tag.
+    function bindItemFocus(item) {
+      var nodeId = item.dataset.nodeId;
+      if (!nodeId) return;
+      item.onclick = function(e) {
+        e.stopPropagation();
+        focusNode(nodeId);
+      };
+      item.title = 'Click to focus node in graph';
+    }
+
     window.onload = function () {
       bind();
 
@@ -168,7 +187,9 @@
         var inputs = getItems(cf);
         Promise.all(inputs.map(fetchPageTitle)).then(function(pageTitles) {
           pageTitles.forEach(function(pageTitle, i) {
-            cf.getElementsByClassName('item')[i].dataset.nodeId = getNormalizedId(pageTitle);
+            var item = cf.getElementsByClassName('item')[i];
+            item.dataset.nodeId = getNormalizedId(pageTitle);
+            bindItemFocus(item);
           });
           setStartPages(pageTitles);
           // Auto-expand all articles. The queryApi queue throttles concurrency.

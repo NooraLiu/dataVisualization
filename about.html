@@ -43,6 +43,15 @@
     .about-container li {
       margin-bottom: 8px;
     }
+
+    kbd {
+      background: #f0f0f0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 14px;
+      font-family: monospace;
+    }
   </style>
 </head>
 <body>
@@ -67,13 +76,33 @@
     </ul>
     
     <h2>How to Use</h2>
-    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua:</p>
+    <p>The tool has two connected parts: a scatterplot for exploring article relationships, and a Wikipedia Map for visualizing how those articles link to each other.</p>
+
+    <h2>Scatterplot Controls</h2>
     <ul>
-      <li>Navigate the scatterplot by clicking and dragging</li>
-      <li>Select different dimensions using the dropdown menus</li>
-      <li>Click on data points to see Wikipedia link connections</li>
-      <li>Use the scoring dropdown to visualize different metrics</li>
-      <li>Toggle between different visualization modes</li>
+      <li><strong>X / Y Axis Dropdowns:</strong> Change the dimensions plotted on each axis (e.g. different PCA components or embedding dimensions).</li>
+      <li><strong>Embedding Model:</strong> Switch between Base Model, Instruct Model, and BERT Embeddings to change how articles are positioned in the space.</li>
+      <li><strong>Scoring Dropdown:</strong> Color the dots by Article Groups, Groups + Base Influence, or Groups + Instruct Influence to highlight different relationships.</li>
+      <li><strong>View Mode (Sections / Articles):</strong> Toggle between showing individual article sections as points, or collapsing them into single article-level points.</li>
+      <li><strong>Hover:</strong> Hover over any dot to see the article title. In Articles view, hovering highlights all dots belonging to the same article group.</li>
+      <li><strong>Click (in Articles view):</strong> Click a group dot to zoom into that article group and see its individual sections.</li>
+    </ul>
+
+    <h2>Opening the Wikipedia Map</h2>
+    <p><strong>Note:</strong> We recommend adding no more than <strong>10 articles</strong> at a time to the Wikipedia Map. Beyond that, the graph can become difficult to read and takes significantly longer to load.</p>
+    <ul>
+      <li><strong>Hover + Space:</strong> While hovering over any dot, press <kbd>Space</kbd> to send that article to the Wikipedia Map. The map opens in a new tab (or updates the existing one).</li>
+      <li><strong>Adding more articles:</strong> Each subsequent hover + Space adds another article to the same map session. All previously added articles are preserved.</li>
+      <li><strong>Auto-expansion:</strong> Articles are automatically expanded to show their sections and linked articles as nodes in the graph.</li>
+      <li><strong>Gold highlighted paths:</strong> Once expansion finishes, the shortest connecting paths between all root articles are highlighted in gold, showing how the topics relate through Wikipedia's link structure.</li>
+    </ul>
+
+    <h2>Wikipedia Map Interactions</h2>
+    <ul>
+      <li><strong>Click an unexpanded node:</strong> Expands it to show its sections or linked articles.</li>
+      <li><strong>Click an already-expanded node:</strong> Starts a manual path selection. Click a second expanded node to highlight the shortest path between them in gold.</li>
+      <li><strong>Hover a node:</strong> Highlights the traceback path from that node to its root article.</li>
+      <li><strong>Expansion modes:</strong> Use the mode dropdown to switch between Mode A (sections with shapes), Mode B (sections then links), and Mode C (sections with colors).</li>
     </ul>
     
     <h2>About the Data</h2>
