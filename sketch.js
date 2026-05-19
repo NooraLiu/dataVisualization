@@ -1,9 +1,13 @@
 // ── Global state ─────────────────────────────────────────────────────────
 let table;          // influence_data.csv
 let hotspotTable;   // article_hotspots.csv
+let qwenSectionVarianceTable;
+let qwenArticleVarianceTable;
 let points = [];
 let articleHotspots = [];
 let hoverIndex = -1;
+let qwenSectionStats = {};
+let qwenArticleStats = {};
 
 // UI elements
 let xDimSelect, yDimSelect, scoringSelect, pcaToggle, viewModeSelect;
@@ -55,6 +59,8 @@ const DIMENSION_NAMES = [
 function preload() {
   table = loadTable('influence_data.csv', 'csv', 'header');
   hotspotTable = loadTable('article_hotspots.csv', 'csv', 'header');
+  qwenSectionVarianceTable = loadTable('qwen_l2_value_variance_sections.csv', 'csv', 'header');
+  qwenArticleVarianceTable = loadTable('qwen_l2_value_variance_articles.csv', 'csv', 'header');
 }
 
 // ── setup ────────────────────────────────────────────────────────────────
@@ -69,12 +75,15 @@ function setup() {
 
   // Detect available numeric dimensions from CSV header
   allDimNames = table.columns.filter(c => DIMENSION_NAMES.includes(c));
+  qwenSectionStats = buildQwenStatsByKey(qwenSectionVarianceTable, 'section_id');
+  qwenArticleStats = buildQwenStatsByKey(qwenArticleVarianceTable, 'article_id');
 
   // Extract points
   for (let r = 0; r < table.getRowCount(); r++) {
     let dims = allDimNames.map(d => float(table.getString(r, d)));
+    let id = table.getString(r, 'id');
     points.push({
-      id:                     table.getString(r, 'id'),
+      id:                     id,
       articleId:              table.getString(r, 'article_id'),
       articleTitle:           table.getString(r, 'article_title'),
       sectionPath:            table.getString(r, 'section_path'),
@@ -90,6 +99,7 @@ function setup() {
       instructTopK:           int(table.getString(r, 'instruct_top_k_count')),
       baseHubScore:           float(table.getString(r, 'base_hub_score')),
       instructHubScore:       float(table.getString(r, 'instruct_hub_score')),
+      qwenStats:              qwenSectionStats[String(id)] || blankQwenStats(),
       dims,
     });
   }
@@ -154,13 +164,21 @@ function setup() {
   scoringSelect.option('Influence Diff');
   scoringSelect.option('Base Hub Score');
   scoringSelect.option('Instruct Hub Score');
+  scoringSelect.option('Qwen Base Value Cloud');
+  scoringSelect.option('Qwen Instruct Value Cloud');
   scoringSelect.option('Section Level');
   scoringSelect.selected('Article Groups');
   scoringSelect.position(670, 115);
   scoringSelect.style('position', 'fixed');
   scoringSelect.style('z-index', '1001');
-  scoringSelect.style('width', '150px');
-  scoringSelect.changed(() => { selectedScoring = scoringSelect.value(); });
+  scoringSelect.style('width', '190px');
+  scoringSelect.changed(() => {
+    selectedScoring = scoringSelect.value();
+    if (isQwenCloudMode()) {
+      pcaToggle.selected('BERT Embeddings');
+      handlePCAToggle();
+    }
+  });
 
   // ── View mode toggle (Sections vs Articles) ───────────────────────────
   viewModeSelect = createSelect();
@@ -236,6 +254,132 @@ function activePoints() {
   return viewMode === 'articles' ? articlePoints : points;
 }
 
+function parseOptionalFloat(row, name, fallback = 0) {
+  if (!row) return fallback;
+  let raw = row.getString(name);
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  let v = float(raw);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function parseOptionalInt(row, name, fallback = 0) {
+  if (!row) return fallback;
+  let raw = row.getString(name);
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  let v = int(raw);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function blankQwenStats() {
+  return {
+    base: {
+      mean: 0,
+      std: 0,
+      nRuns: 0,
+      valuePctile: 0.5,
+      variancePctile: 0,
+    },
+    instruct: {
+      mean: 0,
+      std: 0,
+      nRuns: 0,
+      valuePctile: 0.5,
+      variancePctile: 0,
+    },
+  };
+}
+
+function buildQwenStatsByKey(srcTable, keyColumn) {
+  let out = {};
+  if (!srcTable) return out;
+  for (let r = 0; r < srcTable.getRowCount(); r++) {
+    let row = srcTable.getRow(r);
+    let key = String(row.getString(keyColumn));
+    out[key] = {
+      base: {
+        mean: parseOptionalFloat(row, 'base_value_mean'),
+        std: parseOptionalFloat(row, 'base_value_std'),
+        nRuns: parseOptionalInt(row, 'base_n_runs'),
+        valuePctile: parseOptionalFloat(row, 'base_value_pctile', 0.5),
+        variancePctile: parseOptionalFloat(row, 'base_variance_pctile', 0),
+      },
+      instruct: {
+        mean: parseOptionalFloat(row, 'instruct_value_mean'),
+        std: parseOptionalFloat(row, 'instruct_value_std'),
+        nRuns: parseOptionalInt(row, 'instruct_n_runs'),
+        valuePctile: parseOptionalFloat(row, 'instruct_value_pctile', 0.5),
+        variancePctile: parseOptionalFloat(row, 'instruct_variance_pctile', 0),
+      },
+    };
+  }
+  return out;
+}
+
+function isQwenCloudMode() {
+  return selectedScoring === 'Qwen Base Value Cloud' ||
+         selectedScoring === 'Qwen Instruct Value Cloud';
+}
+
+function activeQwenModelType() {
+  return selectedScoring === 'Qwen Instruct Value Cloud' ? 'instruct' : 'base';
+}
+
+function activeQwenStats(p) {
+  if (!p || !p.qwenStats) return blankQwenStats()[activeQwenModelType()];
+  return p.qwenStats[activeQwenModelType()] || blankQwenStats()[activeQwenModelType()];
+}
+
+function qwenValueColorFromStats(stats) {
+  let v = constrain(stats.valuePctile, 0, 1);
+  return lerpColor(color(45, 95, 190), color(220, 45, 45), v);
+}
+
+function qwenDotSize(stats, isArticle) {
+  let v = constrain(stats.valuePctile, 0, 1);
+  return isArticle ? map(v, 0, 1, 12, 42) : map(v, 0, 1, 4, 11);
+}
+
+function drawQwenCloudPoint(x, y, stats, isArticle) {
+  let col = qwenValueColorFromStats(stats);
+  let variance = constrain(stats.variancePctile, 0, 1);
+  let dotSize = qwenDotSize(stats, isArticle);
+  let maxHalo = isArticle ? map(variance, 0, 1, dotSize + 8, dotSize + 58)
+                          : map(variance, 0, 1, dotSize + 6, dotSize + 36);
+  let baseAlpha = map(variance, 0, 1, 8, 44);
+
+  noStroke();
+  for (let i = 3; i >= 1; i--) {
+    let t = i / 3;
+    let haloSize = lerp(dotSize + 4, maxHalo, t);
+    let alpha = baseAlpha * (1.1 - 0.25 * i);
+    fill(red(col), green(col), blue(col), alpha);
+    ellipse(x, y, haloSize, haloSize);
+  }
+
+  fill(red(col), green(col), blue(col), map(variance, 0, 1, 240, 125));
+  stroke(255, map(variance, 0, 1, 170, 80));
+  strokeWeight(isArticle ? 1.4 : 0.7);
+  ellipse(x, y, dotSize, dotSize);
+}
+
+function formatStat(v) {
+  if (!Number.isFinite(v)) return 'NA';
+  let a = abs(v);
+  if (a >= 1000000 || (a > 0 && a < 0.01)) return v.toExponential(2);
+  if (a >= 1000) return v.toFixed(0);
+  return v.toFixed(2);
+}
+
+function qwenHoverLines(p) {
+  let model = activeQwenModelType();
+  let stats = activeQwenStats(p);
+  let label = model === 'base' ? 'Qwen Base' : 'Qwen Instruct';
+  return [
+    `${label} value: ${formatStat(stats.mean)} ± ${formatStat(stats.std)} (${stats.nRuns} seeds)`,
+    `Value pctile: ${(100 * stats.valuePctile).toFixed(0)}  |  Variance pctile: ${(100 * stats.variancePctile).toFixed(0)}`,
+  ];
+}
+
 function updateDataRanges(xIndex, yIndex) {
   // Use the active point set for range calculation so articles view isn't squished
   let pts = activePoints();
@@ -252,7 +396,9 @@ function detectHover(xIndex, yIndex) {
   let currentXRange = isZoomed ? zoomedXRange : originalXRange;
   let currentYRange = isZoomed ? zoomedYRange : originalYRange;
   let pts = activePoints();
-  let hoverRadius = viewMode === 'articles' ? 12 : 6;
+  let hoverRadius = viewMode === 'articles'
+    ? (isQwenCloudMode() ? 24 : 12)
+    : (isQwenCloudMode() ? 9 : 6);
 
   for (let i = 0; i < pts.length; i++) {
     let p = pts[i];
@@ -326,6 +472,7 @@ function buildArticlePoints() {
       influenceDiff:     infDiff,
       baseHubScore:      baseHub,
       instructHubScore:  instrHub,
+      qwenStats:         qwenArticleStats[String(aid)] || blankQwenStats(),
       level:             0,
     });
   }
@@ -411,6 +558,9 @@ function pointColor(p) {
         return lerpColor(color(240, 240, 240), color(255, 20, 100), norm);
       }
     }
+    case 'Qwen Base Value Cloud':
+    case 'Qwen Instruct Value Cloud':
+      return qwenValueColorFromStats(activeQwenStats(p));
     case 'Section Level':
       return levelColor(p.level);
     case 'Groups + Base Influence': {
@@ -504,6 +654,9 @@ function drawScatterplot(xIndex, yIndex) {
         `Hub: ${p.baseHubScore.toFixed(0)} (base)  |  ${p.instructHubScore.toFixed(0)} (instruct)`,
       ];
     }
+    if (isQwenCloudMode()) {
+      hoverLines = hoverLines.concat(qwenHoverLines(p));
+    }
 
     let boxW = max(...hoverLines.map(l => textWidth(l))) + 24;
     let boxH = 14 + hoverLines.length * 16;
@@ -549,18 +702,21 @@ function drawSectionView(xIndex, yIndex, currentXRange, currentYRange) {
     let col;
     let showHighlight = false;
     let highlightColor, highlightSize, highlightStrokeWeight;
+    let cloudMode = isQwenCloudMode();
+    let qwenStats = activeQwenStats(p);
+    let baseDrawSize = cloudMode ? qwenDotSize(qwenStats, false) : POINT_SIZE;
 
     if (hoverIndex === i) {
       col = color(255, 165, 0);
       showHighlight = true;
       highlightColor = color(255, 165, 0);
-      highlightSize = POINT_SIZE + 10;
+      highlightSize = baseDrawSize + 12;
       highlightStrokeWeight = 2;
     } else if (tableHoverId && String(p.id) === tableHoverId) {
       col = color(80, 200, 120);
       showHighlight = true;
       highlightColor = color(80, 200, 120);
-      highlightSize = POINT_SIZE + 15;
+      highlightSize = baseDrawSize + 16;
       highlightStrokeWeight = 3;
     } else {
       col = pointColor(p);
@@ -573,9 +729,15 @@ function drawSectionView(xIndex, yIndex, currentXRange, currentYRange) {
       ellipse(x, y, highlightSize, highlightSize);
     }
 
-    noStroke();
-    fill(col);
-    ellipse(x, y, POINT_SIZE, POINT_SIZE);
+    if (cloudMode && !showHighlight) {
+      drawQwenCloudPoint(x, y, qwenStats, false);
+    } else if (cloudMode && showHighlight) {
+      drawQwenCloudPoint(x, y, qwenStats, false);
+    } else {
+      noStroke();
+      fill(col);
+      ellipse(x, y, POINT_SIZE, POINT_SIZE);
+    }
   }
 }
 
@@ -593,7 +755,10 @@ function drawArticleView(xIndex, yIndex, currentXRange, currentYRange) {
     let y = map(a.dims[yIndex], currentYRange.min, currentYRange.max,
                 scatterplotY + scatterplotSize, scatterplotY);
 
-    let dotSize = map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), MIN_DOT, MAX_DOT);
+    let cloudMode = isQwenCloudMode();
+    let qwenStats = activeQwenStats(a);
+    let dotSize = cloudMode ? qwenDotSize(qwenStats, true)
+                            : map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), MIN_DOT, MAX_DOT);
     let col = pointColor(a);
 
     // Hover highlight
@@ -604,11 +769,15 @@ function drawArticleView(xIndex, yIndex, currentXRange, currentYRange) {
       ellipse(x, y, dotSize + 8, dotSize + 8);
     }
 
-    // Main dot — semi-transparent fill with solid outline
-    fill(red(col), green(col), blue(col), 180);
-    stroke(red(col), green(col), blue(col));
-    strokeWeight(1.5);
-    ellipse(x, y, dotSize, dotSize);
+    if (cloudMode) {
+      drawQwenCloudPoint(x, y, qwenStats, true);
+    } else {
+      // Main dot — semi-transparent fill with solid outline
+      fill(red(col), green(col), blue(col), 180);
+      stroke(red(col), green(col), blue(col));
+      strokeWeight(1.5);
+      ellipse(x, y, dotSize, dotSize);
+    }
 
     // Label inside/below the dot
     noStroke();
@@ -686,7 +855,35 @@ function drawLegend() {
   let lx = scatterplotX + scatterplotSize - 160;
   let ly = scatterplotY + 10;
 
-  if (selectedScoring === 'Base Influence' || selectedScoring === 'Instruct Influence' ||
+  if (isQwenCloudMode()) {
+    noStroke();
+    for (let i = 0; i < 80; i++) {
+      fill(lerpColor(color(45, 95, 190), color(220, 45, 45), i / 79));
+      rect(lx + i, ly, 1, 10);
+    }
+    fill(0);
+    textSize(9);
+    textAlign(LEFT, TOP);
+    text('Low value', lx, ly + 13);
+    textAlign(RIGHT, TOP);
+    text('High', lx + 80, ly + 13);
+    textAlign(CENTER, TOP);
+    text(selectedScoring.replace(' Value Cloud', ''), lx + 40, ly + 24);
+
+    noStroke();
+    fill(90, 120, 180, 22);
+    ellipse(lx + 18, ly + 55, 24, 24);
+    fill(90, 120, 180, 135);
+    ellipse(lx + 18, ly + 55, 8, 8);
+    fill(180, 70, 70, 28);
+    ellipse(lx + 62, ly + 55, 44, 44);
+    fill(180, 70, 70, 105);
+    ellipse(lx + 62, ly + 55, 10, 10);
+    fill(0);
+    textAlign(CENTER, TOP);
+    textSize(9);
+    text('cloud = seed variance', lx + 40, ly + 78);
+  } else if (selectedScoring === 'Base Influence' || selectedScoring === 'Instruct Influence' ||
       selectedScoring === 'Groups + Base Influence' || selectedScoring === 'Groups + Instruct Influence') {
     let isBase = selectedScoring === 'Base Influence' || selectedScoring === 'Groups + Base Influence';
     let lowCol = isBase ? color(200, 240, 200) : color(200, 210, 240);
@@ -818,7 +1015,9 @@ function mousePressed() {
                    scatterplotX, scatterplotX + scatterplotSize);
       let ay = map(a.dims[yIndex], originalYRange.min, originalYRange.max,
                    scatterplotY + scatterplotSize, scatterplotY);
-      let dotSize = map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), 10, 40);
+      let dotSize = isQwenCloudMode()
+        ? qwenDotSize(activeQwenStats(a), true)
+        : map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), 10, 40);
 
       if (dist(mouseX, mouseY, ax, ay) <= dotSize / 2 + 4) {
         // Switch to sections view zoomed into this article
