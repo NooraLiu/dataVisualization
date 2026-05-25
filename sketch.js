@@ -29,6 +29,15 @@ let zoomedYRange  = { min: 0, max: 1 };
 // Current PCA mode: 'base' or 'instruct'
 let pcaMode = 'base';
 
+// Qwen Contour Map state
+const CONTOUR_RES    = 80;
+const CONTOUR_BW_MIN = 0.018;   // low variancePctile  → narrow sharp spike
+const CONTOUR_BW_MAX = 0.085;   // high variancePctile → wide flat hill
+const CONTOUR_LEVELS = Array.from({length: 40}, (_, i) => parseFloat(((i + 1) / 41).toFixed(4)));
+let contourGrid     = null;   // float[row][col], null = no data
+let contourBuf      = null;   // p5.Graphics offscreen buffer
+let contourCacheKey = '';
+
 // View mode: 'sections' or 'articles'
 let viewMode = 'sections';
 let zoomedFromArticles = false;  // Track if zoom came from articles view
@@ -166,6 +175,8 @@ function setup() {
   scoringSelect.option('Instruct Hub Score');
   scoringSelect.option('Qwen Base Value Cloud');
   scoringSelect.option('Qwen Instruct Value Cloud');
+  scoringSelect.option('Qwen Base Contour');
+  scoringSelect.option('Qwen Instruct Contour');
   scoringSelect.option('Section Level');
   scoringSelect.selected('Article Groups');
   scoringSelect.position(670, 115);
@@ -174,7 +185,7 @@ function setup() {
   scoringSelect.style('width', '190px');
   scoringSelect.changed(() => {
     selectedScoring = scoringSelect.value();
-    if (isQwenCloudMode()) {
+    if (isQwenCloudMode() || isQwenContourMode()) {
       pcaToggle.selected('BERT Embeddings');
       handlePCAToggle();
     }
@@ -380,6 +391,223 @@ function qwenHoverLines(p) {
   ];
 }
 
+// ── Qwen Contour Map helpers ─────────────────────────────────────────────
+function isQwenContourMode() {
+  return selectedScoring === 'Qwen Base Contour' ||
+         selectedScoring === 'Qwen Instruct Contour';
+}
+
+function contourModelType() {
+  return selectedScoring === 'Qwen Instruct Contour' ? 'instruct' : 'base';
+}
+
+function getContourStats(p) {
+  if (!p || !p.qwenStats) return blankQwenStats()['base'];
+  return p.qwenStats[contourModelType()] || blankQwenStats()['base'];
+}
+
+function contourCacheKeyFor(xi, yi, xr, yr) {
+  return [xi, yi, xr.min.toFixed(4), xr.max.toFixed(4),
+          yr.min.toFixed(4), yr.max.toFixed(4),
+          contourModelType(), viewMode].join(',');
+}
+
+// Topographic color ramp: pale blue (low) → mint → yellow → orange → dark red (high)
+function topoColor(v) {
+  if (v === null) return color(240, 242, 245);
+  let e = constrain(v, 0, 1);
+  if (e < 0.25) return lerpColor(color(200, 230, 255), color(145, 210, 175), e / 0.25);
+  if (e < 0.5)  return lerpColor(color(145, 210, 175), color(235, 220, 115), (e - 0.25) / 0.25);
+  if (e < 0.75) return lerpColor(color(235, 220, 115), color(210, 130,  60), (e - 0.5)  / 0.25);
+  return            lerpColor(color(210, 130,  60), color(170,  30,  40), (e - 0.75) / 0.25);
+}
+
+// Build KDE-weighted elevation grid and render it into contourBuf
+function buildContourGrid(xIndex, yIndex, xRange, yRange) {
+  let key = contourCacheKeyFor(xIndex, yIndex, xRange, yRange);
+  if (key === contourCacheKey && contourGrid) return; // already up-to-date
+
+  let pts   = activePoints();
+  let G     = CONTOUR_RES;
+  const BW_MAX_SQ9 = 9 * CONTOUR_BW_MAX * CONTOUR_BW_MAX; // conservative outer cutoff
+  let xSpan = (xRange.max - xRange.min) || 1;
+  let ySpan = (yRange.max - yRange.min) || 1;
+
+  contourGrid = [];
+  for (let row = 0; row < G; row++) {
+    contourGrid[row] = [];
+    let yd = map(row, 0, G - 1, yRange.max, yRange.min); // row 0 = top = yMax
+    for (let col = 0; col < G; col++) {
+      let xd    = map(col, 0, G - 1, xRange.min, xRange.max);
+      let wSum  = 0, wTotal = 0;
+      for (let p of pts) {
+        let dx = (p.dims[xIndex] - xd) / xSpan;
+        let dy = (p.dims[yIndex] - yd) / ySpan;
+        let d2 = dx * dx + dy * dy;
+        if (d2 > BW_MAX_SQ9) continue; // fast outer reject
+        let stats = getContourStats(p);
+        let vp  = stats.valuePctile;
+        // Per-point bandwidth driven by variancePctile:
+        //   low variance  → tight spike (certain, well-defined peak)
+        //   high variance → wide flat hill (uncertain, diffuse influence)
+        let bwi = lerp(CONTOUR_BW_MIN, CONTOUR_BW_MAX,
+                       constrain(stats.variancePctile, 0, 1));
+        if (d2 > 9 * bwi * bwi) continue;
+        let w  = Math.exp(-d2 / (2 * bwi * bwi));
+        // Value-biased weighting: peaks sit at the point's own valuePctile
+        wSum   += vp * vp * w;
+        wTotal += vp * w;
+      }
+      contourGrid[row][col] = wTotal > 0.005 ? wSum / wTotal : null;
+    }
+  }
+
+  // Render filled terrain into offscreen buffer using bilinear interpolation
+  // per pixel so there are no blocky rectangle edges.
+  if (!contourBuf) contourBuf = createGraphics(scatterplotSize, scatterplotSize);
+  let gbuf = contourBuf;
+  gbuf.loadPixels();
+  let pd = gbuf.pixelDensity();
+  let W  = scatterplotSize;
+  let H  = scatterplotSize;
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      // Map pixel → fractional grid coordinates
+      let gc = (px / (W - 1)) * (G - 1);
+      let gr = (py / (H - 1)) * (G - 1);
+      let ci = Math.min(Math.floor(gc), G - 2);
+      let ri = Math.min(Math.floor(gr), G - 2);
+      let fc = gc - ci, fr = gr - ri;
+      let tl = contourGrid[ri][ci],     tr = contourGrid[ri][ci + 1];
+      let bl = contourGrid[ri + 1][ci], br = contourGrid[ri + 1][ci + 1];
+      let v;
+      if (tl === null || tr === null || bl === null || br === null) {
+        v = null;
+      } else {
+        v = tl * (1 - fc) * (1 - fr) + tr * fc * (1 - fr) +
+            bl * (1 - fc) * fr       + br * fc * fr;
+      }
+      let [r, gg, b] = topoColorRGB(v);
+      for (let sy = 0; sy < pd; sy++) {
+        for (let sx = 0; sx < pd; sx++) {
+          let idx = 4 * ((py * pd + sy) * W * pd + (px * pd + sx));
+          gbuf.pixels[idx]     = r;
+          gbuf.pixels[idx + 1] = gg;
+          gbuf.pixels[idx + 2] = b;
+          gbuf.pixels[idx + 3] = 255;
+        }
+      }
+    }
+  }
+  gbuf.updatePixels();
+  contourCacheKey = key;
+}
+
+// Raw RGB version of topoColor for fast pixel-level rendering (no p5 objects)
+function topoColorRGB(v) {
+  if (v === null) return [240, 242, 245];
+  const e = Math.min(Math.max(v, 0), 1);
+  const stops = [
+    [200, 230, 255],
+    [145, 210, 175],
+    [235, 220, 115],
+    [210, 130,  60],
+    [170,  30,  40],
+  ];
+  const t = e * (stops.length - 1);
+  const i = Math.min(Math.floor(t), stops.length - 2);
+  const f = t - i;
+  return [
+    Math.round(stops[i][0] + (stops[i + 1][0] - stops[i][0]) * f),
+    Math.round(stops[i][1] + (stops[i + 1][1] - stops[i][1]) * f),
+    Math.round(stops[i][2] + (stops[i + 1][2] - stops[i][2]) * f),
+  ];
+}
+
+// Marching squares: edge indices 0=top, 1=right, 2=bottom, 3=left
+// Bit encoding: TL=8, TR=4, BR=2, BL=1
+const MS_SEGS = [
+  [],                  // 0:  none
+  [[3, 2]],            // 1:  BL
+  [[2, 1]],            // 2:  BR
+  [[3, 1]],            // 3:  BL+BR
+  [[0, 1]],            // 4:  TR
+  [[0, 3], [1, 2]],    // 5:  TR+BL  (saddle)
+  [[0, 2]],            // 6:  TR+BR
+  [[0, 3]],            // 7:  TR+BR+BL
+  [[0, 3]],            // 8:  TL
+  [[0, 2]],            // 9:  TL+BL
+  [[0, 1], [2, 3]],    // 10: TL+BR  (saddle)
+  [[0, 1]],            // 11: TL+BL+BR
+  [[3, 1]],            // 12: TL+TR
+  [[1, 2]],            // 13: TL+TR+BL
+  [[2, 3]],            // 14: TL+TR+BR
+  [],                  // 15: all
+];
+
+// Returns the screen-space crossing point for 'edge' at 'thresh'
+function edgePt(edge, tl, tr, br, bl, x0, y0, x1, y1, thresh) {
+  let t;
+  switch (edge) {
+    case 0: t = (tr === tl) ? 0.5 : constrain((thresh - tl) / (tr - tl), 0, 1);
+            return { x: lerp(x0, x1, t), y: y0 };
+    case 1: t = (br === tr) ? 0.5 : constrain((thresh - tr) / (br - tr), 0, 1);
+            return { x: x1, y: lerp(y0, y1, t) };
+    case 2: t = (br === bl) ? 0.5 : constrain((thresh - bl) / (br - bl), 0, 1);
+            return { x: lerp(x0, x1, t), y: y1 };
+    case 3: t = (bl === tl) ? 0.5 : constrain((thresh - tl) / (bl - tl), 0, 1);
+            return { x: x0, y: lerp(y0, y1, t) };
+  }
+}
+
+function drawContourLines() {
+  if (!contourGrid) return;
+  let G  = CONTOUR_RES;
+  let cw = scatterplotSize / G;
+  let ch = scatterplotSize / G;
+
+  for (let level of CONTOUR_LEVELS) {
+    // Major every ~10 lines (near 0.25, 0.5, 0.75)
+    let isMajor = (level > 0.23 && level < 0.27) ||
+                  (level > 0.48 && level < 0.52) ||
+                  (level > 0.73 && level < 0.77);
+    stroke(40, 25, 10, isMajor ? 220 : 160);
+    strokeWeight(isMajor ? 2.0 : 0.9);
+
+    for (let row = 0; row < G - 1; row++) {
+      for (let col = 0; col < G - 1; col++) {
+        let tl = contourGrid[row][col];
+        let tr = contourGrid[row][col + 1];
+        let br = contourGrid[row + 1][col + 1];
+        let bl = contourGrid[row + 1][col];
+        if (tl === null || tr === null || br === null || bl === null) continue;
+
+        let idx = (tl > level ? 8 : 0) | (tr > level ? 4 : 0) |
+                  (br > level ? 2 : 0) | (bl > level ? 1 : 0);
+        let segs = MS_SEGS[idx];
+        if (!segs || segs.length === 0) continue;
+
+        let x0 = scatterplotX + col * cw;
+        let y0 = scatterplotY + row * ch;
+        let x1 = x0 + cw;
+        let y1 = y0 + ch;
+
+        for (let [ea, eb] of segs) {
+          let pa = edgePt(ea, tl, tr, br, bl, x0, y0, x1, y1, level);
+          let pb = edgePt(eb, tl, tr, br, bl, x0, y0, x1, y1, level);
+          line(pa.x, pa.y, pb.x, pb.y);
+        }
+      }
+    }
+  }
+}
+
+function drawContourMap(xIndex, yIndex, xRange, yRange) {
+  buildContourGrid(xIndex, yIndex, xRange, yRange);
+  image(contourBuf, scatterplotX, scatterplotY);
+  drawContourLines();
+}
+
 function updateDataRanges(xIndex, yIndex) {
   // Use the active point set for range calculation so articles view isn't squished
   let pts = activePoints();
@@ -561,6 +789,9 @@ function pointColor(p) {
     case 'Qwen Base Value Cloud':
     case 'Qwen Instruct Value Cloud':
       return qwenValueColorFromStats(activeQwenStats(p));
+    case 'Qwen Base Contour':
+    case 'Qwen Instruct Contour':
+      return color(255); // white; actual rendering overrides this
     case 'Section Level':
       return levelColor(p.level);
     case 'Groups + Base Influence': {
@@ -618,6 +849,11 @@ function drawScatterplot(xIndex, yIndex) {
     fill(80);
     textAlign(RIGHT, CENTER);
     text(yValue, scatterplotX - 8, yTick);
+  }
+
+  // ── Contour terrain map (draws behind points) ─────────────────────────
+  if (isQwenContourMode() && !isZoomed) {
+    drawContourMap(xIndex, yIndex, currentXRange, currentYRange);
   }
 
   // ── Article group hotspots (draw behind points, sections view only) ────
@@ -733,6 +969,13 @@ function drawSectionView(xIndex, yIndex, currentXRange, currentYRange) {
       drawQwenCloudPoint(x, y, qwenStats, false);
     } else if (cloudMode && showHighlight) {
       drawQwenCloudPoint(x, y, qwenStats, false);
+    } else if (isQwenContourMode()) {
+      // Color matches the topo terrain ramp
+      let tc = topoColor(getContourStats(p).valuePctile);
+      stroke(20, 20, 20, 200);
+      strokeWeight(0.8);
+      fill(tc);
+      ellipse(x, y, 6, 6);
     } else {
       noStroke();
       fill(col);
@@ -755,10 +998,12 @@ function drawArticleView(xIndex, yIndex, currentXRange, currentYRange) {
     let y = map(a.dims[yIndex], currentYRange.min, currentYRange.max,
                 scatterplotY + scatterplotSize, scatterplotY);
 
-    let cloudMode = isQwenCloudMode();
-    let qwenStats = activeQwenStats(a);
+    let cloudMode    = isQwenCloudMode();
+    let contourMode  = isQwenContourMode();
+    let qwenStats    = activeQwenStats(a);
     let dotSize = cloudMode ? qwenDotSize(qwenStats, true)
-                            : map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), MIN_DOT, MAX_DOT);
+                : contourMode ? 12
+                : map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), MIN_DOT, MAX_DOT);
     let col = pointColor(a);
 
     // Hover highlight
@@ -771,6 +1016,13 @@ function drawArticleView(xIndex, yIndex, currentXRange, currentYRange) {
 
     if (cloudMode) {
       drawQwenCloudPoint(x, y, qwenStats, true);
+    } else if (contourMode) {
+      // Color matches the topo terrain ramp
+      let tc = topoColor(getContourStats(a).valuePctile);
+      stroke(20, 20, 20, 200);
+      strokeWeight(1);
+      fill(tc);
+      ellipse(x, y, dotSize, dotSize);
     } else {
       // Main dot — semi-transparent fill with solid outline
       fill(red(col), green(col), blue(col), 180);
@@ -854,6 +1106,50 @@ function drawArticleHotspots(xIndex, yIndex, currentXRange, currentYRange) {
 function drawLegend() {
   let lx = scatterplotX + scatterplotSize - 160;
   let ly = scatterplotY + 10;
+
+  if (isQwenContourMode()) {
+    // Topographic gradient bar
+    noStroke();
+    let stops = [color(200,230,255), color(145,210,175), color(235,220,115), color(210,130,60), color(170,30,40)];
+    for (let i = 0; i < 80; i++) {
+      let t = i / 79;
+      let seg = constrain(floor(t * (stops.length - 1)), 0, stops.length - 2);
+      let segT = (t * (stops.length - 1)) - seg;
+      fill(lerpColor(stops[seg], stops[seg + 1], segT));
+      rect(lx + i, ly, 1, 10);
+    }
+    fill(0);
+    textSize(9);
+    textAlign(LEFT, TOP);
+    text('Low', lx, ly + 13);
+    textAlign(RIGHT, TOP);
+    text('High', lx + 80, ly + 13);
+    textAlign(CENTER, TOP);
+    text('value pctile', lx + 40, ly + 13);
+    // Contour line samples
+    stroke(60, 40, 20, 80);
+    strokeWeight(0.7);
+    line(lx, ly + 30, lx + 80, ly + 30);
+    stroke(60, 40, 20, 140);
+    strokeWeight(1.6);
+    line(lx, ly + 38, lx + 80, ly + 38);
+    noStroke();
+    fill(80);
+    textSize(9);
+    textAlign(LEFT, CENTER);
+    text('minor / major contours', lx + 3, ly + 48);
+    // White dot marker sample
+    stroke(60, 60, 60, 140);
+    strokeWeight(0.8);
+    fill(255, 255, 255, 200);
+    ellipse(lx + 10, ly + 62, 4, 4);
+    noStroke();
+    fill(80);
+    textAlign(LEFT, CENTER);
+    text('= data point location', lx + 18, ly + 62);
+    textAlign(LEFT, TOP);
+    return;
+  }
 
   if (isQwenCloudMode()) {
     noStroke();
@@ -1017,6 +1313,7 @@ function mousePressed() {
                    scatterplotY + scatterplotSize, scatterplotY);
       let dotSize = isQwenCloudMode()
         ? qwenDotSize(activeQwenStats(a), true)
+        : isQwenContourMode() ? 12
         : map(Math.sqrt(a.sectionCount), 1, Math.sqrt(maxSections), 10, 40);
 
       if (dist(mouseX, mouseY, ax, ay) <= dotSize / 2 + 4) {
