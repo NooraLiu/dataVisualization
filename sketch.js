@@ -33,7 +33,7 @@ let pcaMode = 'base';
 const CONTOUR_RES    = 80;
 const CONTOUR_BW_MIN = 0.018;   // low variancePctile  → narrow sharp spike
 const CONTOUR_BW_MAX = 0.085;   // high variancePctile → wide flat hill
-const CONTOUR_LEVELS = Array.from({length: 40}, (_, i) => parseFloat(((i + 1) / 41).toFixed(4)));
+const CONTOUR_LEVELS = Array.from({length: 55}, (_, i) => parseFloat(((i + 1) / 56).toFixed(4)));
 let contourGrid     = null;   // float[row][col], null = no data
 let contourBuf      = null;   // p5.Graphics offscreen buffer
 let contourCacheKey = '';
@@ -454,9 +454,9 @@ function buildContourGrid(xIndex, yIndex, xRange, yRange) {
                        constrain(stats.variancePctile, 0, 1));
         if (d2 > 9 * bwi * bwi) continue;
         let w  = Math.exp(-d2 / (2 * bwi * bwi));
-        // Value-biased weighting: peaks sit at the point's own valuePctile
-        wSum   += vp * vp * w;
-        wTotal += vp * w;
+        // Unbiased weighted mean of local value percentiles.
+        wSum   += vp * w;
+        wTotal += w;
       }
       contourGrid[row][col] = wTotal > 0.005 ? wSum / wTotal : null;
     }
