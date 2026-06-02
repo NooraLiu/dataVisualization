@@ -27,7 +27,7 @@ let zoomedXRange  = { min: 0, max: 1 };
 let zoomedYRange  = { min: 0, max: 1 };
 
 // Current PCA mode: 'base' or 'instruct'
-let pcaMode = 'base';
+let pcaMode = 'bert';
 
 // Qwen Contour Map state
 const CONTOUR_RES    = 80;
@@ -43,7 +43,7 @@ let viewMode = 'sections';
 let zoomedFromArticles = false;  // Track if zoom came from articles view
 
 // Scoring / color modes
-let selectedScoring = 'Article Groups';
+let selectedScoring = 'Qwen Base Contour';
 
 // Table sync
 let lastHoveredId = null;
@@ -148,15 +148,15 @@ function setup() {
   yDimSelect.style('width', '110px');
 
   populateDimensionDropdowns();
-  xDimSelect.selected('base_pca1');
-  yDimSelect.selected('base_pca2');
+  xDimSelect.selected('bert_umap1');
+  yDimSelect.selected('bert_umap2');
 
   // ── PCA layout toggle ─────────────────────────────────────────────────
   pcaToggle = createSelect();
   pcaToggle.option('Base Model');
   pcaToggle.option('Instruct Model');
   pcaToggle.option('BERT Embeddings');
-  pcaToggle.selected('Base Model');
+  pcaToggle.selected('BERT Embeddings');
   pcaToggle.position(670, 80);
   pcaToggle.style('position', 'fixed');
   pcaToggle.style('z-index', '1001');
@@ -178,7 +178,7 @@ function setup() {
   scoringSelect.option('Qwen Base Contour');
   scoringSelect.option('Qwen Instruct Contour');
   scoringSelect.option('Section Level');
-  scoringSelect.selected('Article Groups');
+  scoringSelect.selected('Qwen Base Contour');
   scoringSelect.position(670, 115);
   scoringSelect.style('position', 'fixed');
   scoringSelect.style('z-index', '1001');
@@ -386,7 +386,7 @@ function qwenHoverLines(p) {
   let stats = activeQwenStats(p);
   let label = model === 'base' ? 'Qwen Base' : 'Qwen Instruct';
   return [
-    `${label} value: ${formatStat(stats.mean)} ± ${formatStat(stats.std)} (${stats.nRuns} seeds)`,
+    `${label} value: ${formatStat(stats.mean)} ± ${formatStat(stats.std)} (4 seeds)`,
     `Value pctile: ${(100 * stats.valuePctile).toFixed(0)}  |  Variance pctile: ${(100 * stats.variancePctile).toFixed(0)}`,
   ];
 }
