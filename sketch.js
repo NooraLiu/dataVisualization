@@ -39,7 +39,7 @@ let contourBuf      = null;   // p5.Graphics offscreen buffer
 let contourCacheKey = '';
 
 // View mode: 'sections' or 'articles'
-let viewMode = 'sections';
+let viewMode = 'articles';
 let zoomedFromArticles = false;  // Track if zoom came from articles view
 
 // Scoring / color modes
@@ -195,7 +195,7 @@ function setup() {
   viewModeSelect = createSelect();
   viewModeSelect.option('Sections');
   viewModeSelect.option('Articles');
-  viewModeSelect.selected('Sections');
+  viewModeSelect.selected('Articles');
   viewModeSelect.position(670, 150);
   viewModeSelect.style('position', 'fixed');
   viewModeSelect.style('z-index', '1001');
