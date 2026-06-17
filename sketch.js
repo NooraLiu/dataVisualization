@@ -27,23 +27,25 @@ let zoomedXRange  = { min: 0, max: 1 };
 let zoomedYRange  = { min: 0, max: 1 };
 
 // Current PCA mode: 'base' or 'instruct'
-let pcaMode = 'bert';
+let pcaMode = 'base';
 
 // Qwen Contour Map state
 const CONTOUR_RES    = 80;
-const CONTOUR_BW_MIN = 0.018;   // low variancePctile  → narrow sharp spike
-const CONTOUR_BW_MAX = 0.085;   // high variancePctile → wide flat hill
-const CONTOUR_LEVELS = Array.from({length: 55}, (_, i) => parseFloat(((i + 1) / 56).toFixed(4)));
+const CONTOUR_BW_MIN = 0.025;   // article view: low variancePctile  → narrow spike
+const CONTOUR_BW_MAX = 0.065;   // article view: high variancePctile → wide flat hill
+const CONTOUR_BW_MIN_SECTION = 0.009;  // section view: tighter, more local variation
+const CONTOUR_BW_MAX_SECTION = 0.030;  // section view: even high-variance stays fairly sharp
+const CONTOUR_LEVELS = Array.from({length: 40}, (_, i) => parseFloat(((i + 1) / 41).toFixed(4)));
 let contourGrid     = null;   // float[row][col], null = no data
 let contourBuf      = null;   // p5.Graphics offscreen buffer
 let contourCacheKey = '';
 
 // View mode: 'sections' or 'articles'
-let viewMode = 'articles';
+let viewMode = 'sections';
 let zoomedFromArticles = false;  // Track if zoom came from articles view
 
 // Scoring / color modes
-let selectedScoring = 'Qwen Base Contour';
+let selectedScoring = 'Article Groups';
 
 // Table sync
 let lastHoveredId = null;
@@ -148,15 +150,15 @@ function setup() {
   yDimSelect.style('width', '110px');
 
   populateDimensionDropdowns();
-  xDimSelect.selected('bert_umap1');
-  yDimSelect.selected('bert_umap2');
+  xDimSelect.selected('base_pca1');
+  yDimSelect.selected('base_pca2');
 
   // ── PCA layout toggle ─────────────────────────────────────────────────
   pcaToggle = createSelect();
   pcaToggle.option('Base Model');
   pcaToggle.option('Instruct Model');
   pcaToggle.option('BERT Embeddings');
-  pcaToggle.selected('BERT Embeddings');
+  pcaToggle.selected('Base Model');
   pcaToggle.position(670, 80);
   pcaToggle.style('position', 'fixed');
   pcaToggle.style('z-index', '1001');
@@ -178,7 +180,7 @@ function setup() {
   scoringSelect.option('Qwen Base Contour');
   scoringSelect.option('Qwen Instruct Contour');
   scoringSelect.option('Section Level');
-  scoringSelect.selected('Qwen Base Contour');
+  scoringSelect.selected('Article Groups');
   scoringSelect.position(670, 115);
   scoringSelect.style('position', 'fixed');
   scoringSelect.style('z-index', '1001');
@@ -195,7 +197,7 @@ function setup() {
   viewModeSelect = createSelect();
   viewModeSelect.option('Sections');
   viewModeSelect.option('Articles');
-  viewModeSelect.selected('Articles');
+  viewModeSelect.selected('Sections');
   viewModeSelect.position(670, 150);
   viewModeSelect.style('position', 'fixed');
   viewModeSelect.style('z-index', '1001');
@@ -386,7 +388,7 @@ function qwenHoverLines(p) {
   let stats = activeQwenStats(p);
   let label = model === 'base' ? 'Qwen Base' : 'Qwen Instruct';
   return [
-    `${label} value: ${formatStat(stats.mean)} ± ${formatStat(stats.std)} (4 seeds)`,
+    `${label} value: ${formatStat(stats.mean)} ± ${formatStat(stats.std)} (${stats.nRuns} seeds)`,
     `Value pctile: ${(100 * stats.valuePctile).toFixed(0)}  |  Variance pctile: ${(100 * stats.variancePctile).toFixed(0)}`,
   ];
 }
@@ -429,7 +431,11 @@ function buildContourGrid(xIndex, yIndex, xRange, yRange) {
 
   let pts   = activePoints();
   let G     = CONTOUR_RES;
-  const BW_MAX_SQ9 = 9 * CONTOUR_BW_MAX * CONTOUR_BW_MAX; // conservative outer cutoff
+  // Section view uses tighter bandwidths so individual sections each form
+  // their own distinct peak/valley instead of merging into broad hills.
+  const bwMin = (viewMode === 'sections') ? CONTOUR_BW_MIN_SECTION : CONTOUR_BW_MIN;
+  const bwMax = (viewMode === 'sections') ? CONTOUR_BW_MAX_SECTION : CONTOUR_BW_MAX;
+  const BW_MAX_SQ9 = 9 * bwMax * bwMax; // conservative outer cutoff
   let xSpan = (xRange.max - xRange.min) || 1;
   let ySpan = (yRange.max - yRange.min) || 1;
 
@@ -450,11 +456,13 @@ function buildContourGrid(xIndex, yIndex, xRange, yRange) {
         // Per-point bandwidth driven by variancePctile:
         //   low variance  → tight spike (certain, well-defined peak)
         //   high variance → wide flat hill (uncertain, diffuse influence)
-        let bwi = lerp(CONTOUR_BW_MIN, CONTOUR_BW_MAX,
+        let bwi = lerp(bwMin, bwMax,
                        constrain(stats.variancePctile, 0, 1));
         if (d2 > 9 * bwi * bwi) continue;
         let w  = Math.exp(-d2 / (2 * bwi * bwi));
-        // Unbiased weighted mean of local value percentiles.
+        // Equal spatial weight: every point contributes its spread fairly.
+        // Elevation = weighted average of valuePctile → blue dots form valleys,
+        // red dots form peaks, bandwidth (variance) controls each one's footprint.
         wSum   += vp * w;
         wTotal += w;
       }
