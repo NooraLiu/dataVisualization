@@ -184,7 +184,7 @@ function setup() {
   scoringSelect.position(670, 115);
   scoringSelect.style('position', 'fixed');
   scoringSelect.style('z-index', '1001');
-  scoringSelect.style('width', '190px');
+  scoringSelect.style('width', '150px');
   scoringSelect.changed(() => {
     selectedScoring = scoringSelect.value();
     if (isQwenCloudMode() || isQwenContourMode()) {
@@ -418,7 +418,7 @@ function contourCacheKeyFor(xi, yi, xr, yr) {
 function topoColor(v) {
   if (v === null) return color(240, 242, 245);
   let e = constrain(v, 0, 1);
-  if (e < 0.25) return lerpColor(color(200, 230, 255), color(145, 210, 175), e / 0.25);
+  if (e < 0.25) return lerpColor(color(195, 210, 242), color(145, 210, 175), e / 0.25);
   if (e < 0.5)  return lerpColor(color(145, 210, 175), color(235, 220, 115), (e - 0.25) / 0.25);
   if (e < 0.75) return lerpColor(color(235, 220, 115), color(210, 130,  60), (e - 0.5)  / 0.25);
   return            lerpColor(color(210, 130,  60), color(170,  30,  40), (e - 0.75) / 0.25);
@@ -516,7 +516,7 @@ function topoColorRGB(v) {
   if (v === null) return [240, 242, 245];
   const e = Math.min(Math.max(v, 0), 1);
   const stops = [
-    [200, 230, 255],
+    [195, 210, 242],
     [145, 210, 175],
     [235, 220, 115],
     [210, 130,  60],
@@ -733,7 +733,7 @@ function drawLabels() {
 
 // ── Level colors ─────────────────────────────────────────────────────────
 const LEVEL_COLORS = {
-  0: [70, 130, 180],   // steelblue  – Introduction
+  0: [76, 116, 190],   // steelblue  – Introduction
   2: [220, 120, 50],   // orange     – H2
   3: [80, 180, 80],    // green      – H3
   4: [180, 80, 180],   // purple     – H4
@@ -759,7 +759,7 @@ function pointColor(p) {
     }
     case 'Instruct Influence': {
       let v = constrain(p.normInstruct, 0, 1);
-      return lerpColor(color(200, 210, 240), color(20, 20, 180), v);
+      return lerpColor(color(195, 210, 242), color(20, 75, 180), v);
     }
     case 'Influence Diff': {
       // Diverging: red (base higher) → white → blue (instruct higher)
@@ -773,7 +773,7 @@ function pointColor(p) {
       if (norm < 0) {
         return lerpColor(color(255, 255, 255), color(220, 40, 40), -norm);
       } else {
-        return lerpColor(color(255, 255, 255), color(40, 40, 220), norm);
+        return lerpColor(color(255, 255, 255), color(25, 95, 220), norm);
       }
     }
     case 'Base Hub Score':
@@ -808,10 +808,10 @@ function pointColor(p) {
     }
     case 'Groups + Instruct Influence': {
       let v = constrain(p.normInstruct, 0, 1);
-      return lerpColor(color(200, 210, 240), color(20, 20, 180), v);
+      return lerpColor(color(195, 210, 242), color(20, 75, 180), v);
     }
     default: // 'Article Groups' or anything else
-      return color(70, 130, 180); // steelblue
+      return color(76, 116, 190); // steelblue
   }
 }
 
@@ -836,27 +836,35 @@ function drawScatterplot(xIndex, yIndex) {
   line(scatterplotX, scatterplotY, scatterplotX, scatterplotY + scatterplotSize);
 
   // ── Tick marks ─────────────────────────────────────────────────────────
+  const SPATIAL_DIMS = new Set(['base_pca1','base_pca2','instruct_pca1','instruct_pca2','bert_umap1','bert_umap2']);
+  let xIsSpatial = SPATIAL_DIMS.has(allDimNames[xIndex]);
+  let yIsSpatial = SPATIAL_DIMS.has(allDimNames[yIndex]);
+
   textSize(10);
   noStroke();
   let numTicks = 5;
   for (let i = 0; i <= numTicks; i++) {
     let xTick = scatterplotX + (i / numTicks) * scatterplotSize;
-    let xValue = nf(lerp(currentXRange.min, currentXRange.max, i / numTicks), 1, 2);
     stroke(80);
     line(xTick, scatterplotY + scatterplotSize, xTick, scatterplotY + scatterplotSize + 6);
-    noStroke();
-    fill(80);
-    textAlign(CENTER, TOP);
-    text(xValue, xTick, scatterplotY + scatterplotSize + 8);
+    if (!xIsSpatial) {
+      let xValue = nf(lerp(currentXRange.min, currentXRange.max, i / numTicks), 1, 2);
+      noStroke();
+      fill(80);
+      textAlign(CENTER, TOP);
+      text(xValue, xTick, scatterplotY + scatterplotSize + 8);
+    }
 
     let yTick = scatterplotY + scatterplotSize - (i / numTicks) * scatterplotSize;
-    let yValue = nf(lerp(currentYRange.min, currentYRange.max, i / numTicks), 1, 2);
     stroke(80);
     line(scatterplotX - 6, yTick, scatterplotX, yTick);
-    noStroke();
-    fill(80);
-    textAlign(RIGHT, CENTER);
-    text(yValue, scatterplotX - 8, yTick);
+    if (!yIsSpatial) {
+      let yValue = nf(lerp(currentYRange.min, currentYRange.max, i / numTicks), 1, 2);
+      noStroke();
+      fill(80);
+      textAlign(RIGHT, CENTER);
+      text(yValue, scatterplotX - 8, yTick);
+    }
   }
 
   // ── Contour terrain map (draws behind points) ─────────────────────────
@@ -1118,7 +1126,7 @@ function drawLegend() {
   if (isQwenContourMode()) {
     // Topographic gradient bar
     noStroke();
-    let stops = [color(200,230,255), color(145,210,175), color(235,220,115), color(210,130,60), color(170,30,40)];
+    let stops = [color(195,210,242), color(145,210,175), color(235,220,115), color(210,130,60), color(170,30,40)];
     for (let i = 0; i < 80; i++) {
       let t = i / 79;
       let seg = constrain(floor(t * (stops.length - 1)), 0, stops.length - 2);
@@ -1175,9 +1183,9 @@ function drawLegend() {
     text(selectedScoring.replace(' Value Cloud', ''), lx + 40, ly + 24);
 
     noStroke();
-    fill(90, 120, 180, 22);
+    fill(45, 95, 190, 22);
     ellipse(lx + 18, ly + 55, 24, 24);
-    fill(90, 120, 180, 135);
+    fill(45, 95, 190, 135);
     ellipse(lx + 18, ly + 55, 8, 8);
     fill(180, 70, 70, 28);
     ellipse(lx + 62, ly + 55, 44, 44);
@@ -1190,8 +1198,8 @@ function drawLegend() {
   } else if (selectedScoring === 'Base Influence' || selectedScoring === 'Instruct Influence' ||
       selectedScoring === 'Groups + Base Influence' || selectedScoring === 'Groups + Instruct Influence') {
     let isBase = selectedScoring === 'Base Influence' || selectedScoring === 'Groups + Base Influence';
-    let lowCol = isBase ? color(200, 240, 200) : color(200, 210, 240);
-    let highCol = isBase ? color(220, 20, 20) : color(20, 20, 180);
+    let lowCol = isBase ? color(200, 240, 200) : color(195, 210, 242);
+    let highCol = isBase ? color(220, 20, 20) : color(20, 75, 180);
 
     noStroke();
     for (let i = 0; i < 80; i++) {
@@ -1214,7 +1222,7 @@ function drawLegend() {
       if (t < 0.5) {
         c = lerpColor(color(220, 40, 40), color(255, 255, 255), t * 2);
       } else {
-        c = lerpColor(color(255, 255, 255), color(40, 40, 220), (t - 0.5) * 2);
+        c = lerpColor(color(255, 255, 255), color(25, 95, 220), (t - 0.5) * 2);
       }
       fill(c);
       rect(lx + i, ly, 1, 10);
@@ -1419,6 +1427,25 @@ function populateDataTable() {
 
   let headers = colNames.slice();
 
+  // Short display labels for headers (full name kept in title tooltip)
+  const COL_LABELS = {
+    'base_total_influence':    'base inf',
+    'instruct_total_influence':'inst inf',
+    'influence_diff':          'inf diff',
+    'base_hub_score':          'base hub',
+    'instruct_hub_score':      'inst hub',
+    'base_top_k_count':        'base topk',
+    'instruct_top_k_count':    'inst topk',
+    'base_pca1':               'base pc1',
+    'base_pca2':               'base pc2',
+    'instruct_pca1':           'inst pc1',
+    'instruct_pca2':           'inst pc2',
+    'bert_umap1':              'bert u1',
+    'bert_umap2':              'bert u2',
+    'article_title':           'article',
+    'section_path':            'section path',
+  };
+
   let tableRows = [];
   for (let r = 0; r < table.getRowCount(); r++) {
     let row = colNames.map(c => {
@@ -1439,7 +1466,8 @@ function populateDataTable() {
     let w = '80px';
     if (h === 'question' || h === 'section_path') w = '200px';
     else if (h === 'article_title' || h === 'heading') w = '130px';
-    return `<th style="width:${w};min-width:${w};max-width:${w};" title="${h}">${h}</th>`;
+    let label = COL_LABELS[h] || h;
+    return `<th style="width:${w};min-width:${w};max-width:${w};" title="${h}">${label}</th>`;
   }).join('') + '</tr></thead>';
 
   let tbody = '<tbody>' + tableRows.map(row =>
@@ -1448,7 +1476,8 @@ function populateDataTable() {
       let w = '80px';
       if (h === 'question' || h === 'section_path') w = '200px';
       else if (h === 'article_title' || h === 'heading') w = '130px';
-      return `<td style="width:${w};min-width:${w};max-width:${w};" title="${cell}">${cell}</td>`;
+      let cls = (h === 'question' || h === 'section_path' || h === 'heading') ? ' class="question-cell"' : '';
+      return `<td${cls} style="width:${w};min-width:${w};max-width:${w};" title="${cell}">${cell}</td>`;
     }).join('') + '</tr>'
   ).join('') + '</tbody>';
 
@@ -1458,6 +1487,17 @@ function populateDataTable() {
     $('#data-table').DataTable().destroy();
   }
 
+  // Columns hidden by default (togglable via the ColVis button)
+  const hiddenByDefault = new Set([
+    'base_pca1','base_pca2','instruct_pca1','instruct_pca2',
+    'bert_umap1','bert_umap2',
+    'base_top_k_count','instruct_top_k_count','level',
+  ]);
+  let hiddenTargets = colNames.reduce((acc, name, i) => {
+    if (hiddenByDefault.has(name)) acc.push(i);
+    return acc;
+  }, []);
+
   $('#data-table').DataTable({
     scrollX: true,
     paging: true,
@@ -1466,6 +1506,7 @@ function populateDataTable() {
     select: { style: 'single' },
     dom: 'Blfrtip',
     buttons: ['colvis'],
+    columnDefs: [{ visible: false, targets: hiddenTargets }],
     createdRow: function(row, data) {
       $(row).css('height', `${ROW_HEIGHT}px`);
       $(row).css('cursor', 'pointer');

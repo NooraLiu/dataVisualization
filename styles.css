@@ -117,6 +117,14 @@ body {
   width: 100%;
 }
 
+/* Shrink column header text */
+#data-table thead th {
+  font-size: 10px;
+  line-height: 1.3;
+  vertical-align: bottom;
+  padding-bottom: 6px;
+}
+
 /* Set a fixed height for all rows */
 #data-table tbody tr {
   height: 150px;
@@ -129,6 +137,16 @@ body {
   white-space: nowrap;
   position: relative;
   cursor: pointer;
+}
+
+/* question, section_path, heading columns: wrap text, clip vertically at the fixed row height */
+#data-table tbody td.question-cell {
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-y: hidden;
+  text-overflow: clip;
+  vertical-align: middle;
+  line-height: 1.4;
 }
 
 /* Custom tooltip on hover */
