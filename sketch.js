@@ -51,6 +51,10 @@ let selectedScoring = 'Article Groups';
 let lastHoveredId = null;
 let tableHoverId = null;
 
+// Selected point & nearest neighbours (from table row click)
+let selectedPointId = null;
+let neighbourIds    = [];
+
 // Wikipedia-map tab reference
 let wikiMapWindow = null;
 let wikiMapArticles = [];
@@ -970,6 +974,12 @@ function drawSectionView(xIndex, yIndex, currentXRange, currentYRange) {
       highlightColor = color(80, 200, 120);
       highlightSize = baseDrawSize + 16;
       highlightStrokeWeight = 3;
+    } else if (selectedPointId && String(p.id) === selectedPointId) {
+      col = color(220, 60, 20);
+      showHighlight = true;
+      highlightColor = color(220, 60, 20);
+      highlightSize = baseDrawSize + 18;
+      highlightStrokeWeight = 3;
     } else {
       col = pointColor(p);
     }
@@ -1518,7 +1528,8 @@ function populateDataTable() {
       });
       $(row).on('click', function() {
         // data indices: 0=id, 1=article_title, 2=section_path, 3=heading
-        showWikiPopup(data[1], data[2], data[3]);
+        selectPointAndNeighbours(data[0]);
+        showWikiPopup(data[0], data[1], data[2], data[3]);
       });
     }
   });
@@ -1535,7 +1546,7 @@ function buildWikiUrl(articleTitle, heading) {
   return `https://en.wikipedia.org/wiki/${encodeURIComponent(titleSlug)}${anchor}`;
 }
 
-function showWikiPopup(articleTitle, sectionPath, heading) {
+function showWikiPopup(pointId, articleTitle, sectionPath, heading) {
   let url = buildWikiUrl(articleTitle, heading);
   let popup = document.getElementById('wiki-popup');
   document.getElementById('wiki-popup-title').textContent = articleTitle;
@@ -1543,7 +1554,107 @@ function showWikiPopup(articleTitle, sectionPath, heading) {
   let link = document.getElementById('wiki-popup-link');
   link.href = url;
   link.textContent = `Open: ${articleTitle} > ${heading}`;
+
+  // Populate nearest neighbours list
+  let neighboursList = document.getElementById('wiki-popup-neighbours-list');
+  let neighboursArea = document.getElementById('wiki-popup-neighbours-area');
+  if (neighbourIds.length > 0) {
+    neighboursList.innerHTML = neighbourIds.map(nid => {
+      let np = points.find(p => String(p.id) === nid);
+      if (!np) return '';
+      let url = buildWikiUrl(np.articleTitle, np.heading);
+      return `<li><a href="${url}" target="_blank"
+                style="color:#1a73e8; text-decoration:none;"
+                onmouseover="this.style.textDecoration='underline'"
+                onmouseout="this.style.textDecoration='none'"
+              >${np.articleTitle} &rsaquo; ${np.heading}</a></li>`;
+    }).filter(Boolean).join('');
+    neighboursArea.style.display = 'block';
+  } else {
+    neighboursArea.style.display = 'none';
+  }
+
+  // Show links area in loading state
+  let linksArea    = document.getElementById('wiki-popup-links-area');
+  let linksLoading = document.getElementById('wiki-popup-links-loading');
+  let linksList    = document.getElementById('wiki-popup-links-list');
+  linksLoading.textContent = 'Loading…';
+  linksLoading.style.display = 'block';
+  linksList.style.display = 'none';
+  linksList.innerHTML = '';
+  linksArea.style.display = 'block';
+
   popup.style.display = 'flex';
+
+  fetchWikiSectionLinks(articleTitle, heading).then(links => {
+    linksLoading.style.display = 'none';
+    if (!links || links.length === 0) {
+      linksLoading.textContent = 'No links found in this section.';
+      linksLoading.style.display = 'block';
+      return;
+    }
+    linksList.innerHTML = links.slice(0, 5).map(title => {
+      let href = `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
+      return `<li><a href="${href}" target="_blank" style="color:#1a73e8;">${title}</a></li>`;
+    }).join('');
+    linksList.style.display = 'block';
+  }).catch(() => {
+    linksLoading.textContent = 'Could not load links.';
+    linksLoading.style.display = 'block';
+  });
+}
+
+async function fetchWikiSectionLinks(articleTitle, heading) {
+  let base = 'https://en.wikipedia.org/w/api.php';
+  // Step 1: find the section index for this heading
+  let secRes = await fetch(
+    `${base}?action=parse&page=${encodeURIComponent(articleTitle)}&prop=sections&format=json&origin=*`
+  );
+  let secData = await secRes.json();
+  let sections = (secData.parse && secData.parse.sections) || [];
+  let sec = sections.find(s =>
+    s.line === heading || s.anchor === heading.replace(/ /g, '_')
+  );
+  let sectionIdx = sec ? sec.index : '0';
+  // Step 2: get rendered HTML of that section — preserves order of appearance
+  let htmlRes = await fetch(
+    `${base}?action=parse&page=${encodeURIComponent(articleTitle)}&section=${sectionIdx}&prop=text&format=json&origin=*`
+  );
+  let htmlData = await htmlRes.json();
+  let html = (htmlData.parse && htmlData.parse.text && htmlData.parse.text['*']) || '';
+  // Extract /wiki/ links in DOM order, skipping special namespaces
+  let doc = new DOMParser().parseFromString(html, 'text/html');
+  let seen = new Set();
+  let links = [];
+  doc.querySelectorAll('a[href^="/wiki/"]').forEach(a => {
+    let href = a.getAttribute('href');
+    if (/\/wiki\/(Special|File|Category|Wikipedia|Help|Template|Portal):/.test(href)) return;
+    if (href.includes('#')) return;
+    let title = decodeURIComponent(href.replace('/wiki/', '')).replace(/_/g, ' ');
+    if (!seen.has(title)) {
+      seen.add(title);
+      links.push(title);
+    }
+  });
+  return links;
+}
+
+function selectPointAndNeighbours(id) {
+  selectedPointId = String(id);
+  let xIdx = allDimNames.indexOf(xDimSelect.value());
+  let yIdx = allDimNames.indexOf(yDimSelect.value());
+  let self = points.find(p => String(p.id) === selectedPointId);
+  if (!self) { neighbourIds = []; return; }
+
+  let dists = points
+    .filter(p => String(p.id) !== selectedPointId)
+    .map(p => ({
+      id: p.id,
+      d: Math.hypot(p.dims[xIdx] - self.dims[xIdx], p.dims[yIdx] - self.dims[yIdx])
+    }))
+    .sort((a, b) => a.d - b.d);
+
+  neighbourIds = dists.slice(0, 3).map(d => String(d.id));
 }
 
 // ── Locate row by ID ─────────────────────────────────────────────────────
